@@ -37,7 +37,7 @@ impl<const B: bool> syn::parse::Parse for Item<B> {
 		let mut chain = None;
 		
 		let (build, (props, back)) = 'back: {
-			for _ in 0..2 {
+			for _ in 0..3 {
 				if !input.peek(syn::Lifetime) { break }
 				let error = input.fork();
 				
