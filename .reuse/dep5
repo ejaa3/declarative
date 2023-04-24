@@ -1,0 +1,8 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Declarative
+Upstream-Contact: Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+Source: https://github.com/ejaa3/declarative
+
+Files: Cargo.lock dark.png light.png
+Copyright: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+License: Unlicense

@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+#
+# SPDX-License-Identifier: Unlicense
+
+[workspace]
+members = ['gtk4']
+
+[workspace.package]
+authors     = ['Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>']
+categories  = ['gui']
+edition     = '2021'
+license     = 'Apache-2.0 OR MIT'
+repository  = 'https://github.com/ejaa3/declarative/'
+version     = '0.1.0'
+
+[package]
+description = 'Declarative Syntax Macro'
+keywords    = ['GUI', 'macro', 'reactive', 'view']
+name        = 'declarative'
+authors     = { workspace = true }
+categories  = { workspace = true }
+edition     = { workspace = true }
+license     = { workspace = true }
+repository  = { workspace = true }
+version     = { workspace = true }
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = '1'
+quote = '1'
+syn = { version = '2', default-features = false, features = ['parsing', 'visit-mut'] }
