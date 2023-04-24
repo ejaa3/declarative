@@ -114,9 +114,9 @@ impl<const B: bool> syn::parse::Parse for Content<B> {
 				let name = input.parse()?;
 				input.parse::<syn::Token![:]>()?;
 				
-				let clones = if let Ok(kw) = input.parse::<syn::Lifetime>() {
-					if kw.ident != "clone" { Err(input.error("expected 'clone"))? }
-					common::clones(input)?
+				let clones = if let Ok(keyword) = input.parse::<syn::Lifetime>() {
+					if keyword.ident != "clone" { Err(input.error("expected 'clone"))? }
+					common::parse_clones(input)?
 				} else { Punctuated::new() };
 				
 				Ok(Content::Binding { attrs, mut0, name, clones, closure: input.parse()?})

@@ -103,7 +103,7 @@ pub(crate) fn chain(input: ParseStream) -> syn::Result<TokenStream> {
 
 pub(crate) fn content<const B: bool>(input: ParseStream) -> syn::Result<Vec<Content<B>>> {
 	let mut props = vec![];
-	while !input.is_empty() { props.push(Content::parse(&input)?) }
+	while !input.is_empty() { props.push(input.parse()?) }
 	Ok(props)
 }
 
@@ -123,9 +123,9 @@ pub(crate) fn back<const B: bool>(input: ParseStream) -> syn::Result<Back<B>> {
 	
 	let build = input.parse()?;
 	
-	let content; syn::braced!(content in input);
+	let braces; syn::braced!(braces in input);
 	let mut props = vec![];
-	while !content.is_empty() { props.push(content.parse()?) }
+	while !braces.is_empty() { props.push(braces.parse()?) }
 	
 	Ok(Back { mut0, name, build, props })
 }
@@ -136,7 +136,7 @@ pub(crate) fn item_content<const B: bool>(input: ParseStream) -> syn::Result<(Ve
 	let braces; syn::braced!(braces in input);
 	
 	while !braces.is_empty() {
-		let content = Content::parse(&braces)?;
+		let content = braces.parse()?;
 		
 		if let Content::Back(token) = content {
 			if back.is_some() {
@@ -152,9 +152,9 @@ pub(crate) fn item_content<const B: bool>(input: ParseStream) -> syn::Result<(Ve
 
 pub(crate) fn props<T: Parse>(input: ParseStream) -> syn::Result<Vec<T>> {
 	if input.peek(syn::token::Brace) {
-		let content; syn::braced!(content in input);
+		let braces; syn::braced!(braces in input);
 		let mut props = vec![];
-		while !content.is_empty() { props.push(T::parse(&content)?) }
+		while !braces.is_empty() { props.push(braces.parse()?) }
 		Ok(props)
 	} else { Ok(vec![input.parse()?]) }
 }
@@ -190,10 +190,10 @@ pub(crate) fn extend_attributes(attrs: &mut Vec<syn::Attribute>, pattrs: &[syn::
 	attrs.extend(current.into_iter());
 }
 
-pub(crate) fn clones(input: ParseStream) -> syn::Result<Punctuated<Clone, syn::Token![,]>> {
+pub(crate) fn parse_clones(input: ParseStream) -> syn::Result<Punctuated<Clone, syn::Token![,]>> {
 	if input.peek(syn::token::Brace) {
-		let content; syn::braced!(content in input);
-		content.parse_terminated(<Clone as Parse>::parse, syn::Token![,])
+		let braces; syn::braced!(braces in input);
+		braces.parse_terminated(Clone::parse, syn::Token![,])
 	} else {
 		let mut clones = Punctuated::new();
 		clones.push(input.parse()?);

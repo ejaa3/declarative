@@ -50,8 +50,8 @@ impl<const B: bool> syn::parse::Parse for Item<B> {
 						if wrap.is_some() { Err(input.error("expected a single 'wrap"))? }
 						
 						if input.peek(syn::token::Paren) {
-							let wrap; syn::parenthesized!(wrap in input);
-							Some(wrap.parse_terminated(syn::Path::parse, syn::Token![,])?)
+							let parens; syn::parenthesized!(parens in input);
+							Some(parens.parse_terminated(syn::Path::parse, syn::Token![,])?)
 						} else {
 							let mut wrap = Punctuated::new();
 							wrap.push(input.parse()?);

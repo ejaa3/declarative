@@ -25,7 +25,7 @@ struct Block(Vec<Content>);
 impl Parse for Block {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
 		let mut props = vec![];
-		while !input.is_empty() { props.push(Content::parse(&input)?) }
+		while !input.is_empty() { props.push(input.parse()?) }
 		Ok(Block(props))
 	}
 }

@@ -53,9 +53,7 @@ impl<T: Parse> Parse for Prop<T> {
 			args.push_punct(Default::default());
 		}
 		
-		let value = T::parse(input)?;
-		
-		Ok(Prop { attrs, ident, gens, args, rest, value })
+		Ok(Prop { attrs, ident, gens, args, rest, value: input.parse()? })
 	}
 }
 
@@ -90,12 +88,11 @@ impl<const B: bool> Parse for Value<B> {
 
 pub(crate) enum Expr<const B: bool> {
 	Call {
-		  clones: Punctuated<common::Clone, syn::Token![,]>,
-		   value: syn::Expr,
-		// chain: Option<TokenStream>,
-		    back: Option<common::Back<B>>,
+		clones: Punctuated<common::Clone, syn::Token![,]>,
+		 value: syn::Expr,
+		  back: Option<common::Back<B>>,
 	},
-	Invoke { /* chain: Option<TokenStream>, */ back: Option<common::Back<B>> },
+	Invoke { back: Option<common::Back<B>> },
 	Field(Punctuated<common::Clone, syn::Token![,]>, syn::Expr),
 	Edit(Vec<Content<B>>),
 }
@@ -103,13 +100,6 @@ pub(crate) enum Expr<const B: bool> {
 impl<const B: bool> Parse for Expr<B> {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
 		let ahead = input.lookahead1();
-		
-		/* let chain = ||
-			if let Ok("chain") = input.fork().parse::<syn::Lifetime>()
-				.map(|keyword| keyword.ident.to_string()).as_deref() {
-					input.parse::<syn::Lifetime>()?;
-					Ok(Some(common::chain(input)?))
-				} else { Ok::<_, syn::Error>(None) }; */
 		
 		let back = ||
 			if let Ok("back") = input.fork().parse::<syn::Lifetime>()
@@ -126,18 +116,16 @@ impl<const B: bool> Parse for Expr<B> {
 					let error = input.fork();
 					
 					if input.parse::<syn::Lifetime>()?.ident.to_string().as_str() == "clone" {
-						common::clones(input)?
+						common::parse_clones(input)?
 					} else { Err(error.error("expected 'clone"))? }
 				} else { Punctuated::new() },
 				
 				value: input.parse()?,
-				
-				// chain: chain()?
-				back: back()?
+				 back: back()?
 			})
 		} else if ahead.peek(syn::Token![!]) {
 			input.parse::<syn::Token![!]>()?;
-			Ok(Expr::Invoke { /* chain: chain()? */ back: back()? })
+			Ok(Expr::Invoke { back: back()? })
 		} else if ahead.peek(syn::Token![=]) {
 			input.parse::<syn::Token![=]>()?;
 			
@@ -148,12 +136,12 @@ impl<const B: bool> Parse for Expr<B> {
 				if input.parse::<syn::Lifetime>()?.ident != "clone" {
 					return Err(error.error("expected 'clone"))
 				}
-				Ok(Expr::Field(common::clones(input)?, input.parse()?))
+				Ok(Expr::Field(common::parse_clones(input)?, input.parse()?))
 			}
 		} else if ahead.peek(syn::Token![->]) {
 			input.parse::<syn::Token![->]>()?;
-			let props; syn::braced!(props in input);
-			Ok(Expr::Edit(common::content(&props)?))
+			let braces; syn::braced!(braces in input);
+			Ok(Expr::Edit(common::content(&braces)?))
 		} else {
 			Err(ahead.error())
 		}
@@ -230,9 +218,9 @@ pub(crate) fn expand_expr<const B: bool>(
 		
 		return None
 	} else {
-		if build { return Some(quote![.#ident #(::#gens)* (#args #assigned #rest)]) } // #chain
+		if build { return Some(quote![.#ident #(::#gens)* (#args #assigned #rest)]) }
 		
-		Some(quote![#(#pattrs)* #(#attrs)* #(#name.)* #ident #(::#gens)* (#args #assigned #rest);]) // #chain;
+		Some(quote![#(#pattrs)* #(#attrs)* #(#name.)* #ident #(::#gens)* (#args #assigned #rest);])
 	}
 }
 

@@ -20,7 +20,9 @@ impl<T: Expand> Parse for If<T> {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
 		let else0 = input.parse()?;
 		let if0: Option<_> = input.parse()?;
-		let expr = if0.is_some().then(|| syn::Expr::parse_without_eager_brace(input)).transpose()?;
+		let expr = if0.is_some()
+			.then(|| input.call(syn::Expr::parse_without_eager_brace))
+			.transpose()?;
 		let props = common::props(input)?;
 		
 		Ok(If { else0, if0, expr, props })
@@ -43,11 +45,11 @@ impl<T: Expand> Parse for Match<T> {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
 		Ok(Match {
 			token: input.parse()?,
-			 expr: syn::Expr::parse_without_eager_brace(input)?,
+			 expr: input.call(syn::Expr::parse_without_eager_brace)?,
 			 arms: {
-				let content; syn::braced!(content in input);
+				let braces; syn::braced!(braces in input);
 				let mut arms = vec![];
-				while !content.is_empty() { arms.push(content.parse()?) }
+				while !braces.is_empty() { arms.push(braces.parse()?) }
 				arms
 			},
 		})
@@ -66,9 +68,11 @@ pub(crate) struct Arm<T: Expand> {
 impl<T: Expand> Parse for Arm<T> {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
 		Ok(Arm {
-			attrs: syn::Attribute::parse_outer(input)?,
-			  pat: syn::Pat::parse_multi_with_leading_vert(input)?,
-			guard: input.peek(syn::Token![if]).then(|| Ok::<_, syn::Error>((input.parse()?, input.parse()?))).transpose()?,
+			attrs: input.call(syn::Attribute::parse_outer)?,
+			  pat: input.call(syn::Pat::parse_multi_with_leading_vert)?,
+			guard: input.peek(syn::Token![if])
+				.then(|| Ok::<_, syn::Error>((input.parse()?, input.parse()?)))
+				.transpose()?,
 			arrow: input.parse()?,
 			 body: common::props(input)?,
 			comma: input.parse()?,
@@ -85,13 +89,13 @@ pub(crate) enum Inner<T: Expand> {
 impl<T: Expand> Parse for Inner<T> {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
 		let ahead = input.fork();
-		syn::Attribute::parse_outer(&ahead)?;
+		ahead.call(syn::Attribute::parse_outer)?;
 		
 		if ahead.peek(syn::Token![if]) {
-			let attrs = syn::Attribute::parse_outer(input)?;
+			let attrs = input.call(syn::Attribute::parse_outer)?;
 			Ok(Inner::If { attrs, if0: parse_ifs(input)? })
 		} else if ahead.peek(syn::Token![match]) {
-			let attrs = syn::Attribute::parse_outer(input)?;
+			let attrs = input.call(syn::Attribute::parse_outer)?;
 			Ok(Inner::Match { attrs, mat: input.parse()? })
 		} else {
 			Ok(Inner::Prop(input.parse()?))
