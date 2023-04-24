@@ -42,6 +42,10 @@ impl<const B: bool> syn::parse::Parse for Item<B> {
 				let error = input.fork();
 				
 				match input.parse::<syn::Lifetime>()?.ident.to_string().as_str() {
+					"chain" => chain = {
+						if chain.is_some() { Err(input.error("expected a single 'chain"))? }
+						Some(common::chain(input)?)
+					},
 					"wrap" => wrap = {
 						if wrap.is_some() { Err(input.error("expected a single 'wrap"))? }
 						
@@ -54,12 +58,8 @@ impl<const B: bool> syn::parse::Parse for Item<B> {
 							Some(wrap)
 						}
 					},
-					"chain" => chain = {
-						if chain.is_some() { Err(input.error("expected a single 'chain"))? }
-						Some(common::chain(input)?)
-					},
 					"back" => break 'back (None, (vec![], Some(common::back(input)?))),
-					_ => Err(error.error("expected 'name, 'wrap or 'chain"))?
+					_ => Err(error.error("expected 'back, 'chain or 'wrap"))?
 				}
 			}
 			

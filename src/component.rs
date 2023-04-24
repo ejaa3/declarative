@@ -53,7 +53,7 @@ impl<const B: bool> syn::parse::Parse for Component<B> {
 						Some(common::chain(input)?)
 					},
 					"back" => break 'back (None, (vec![], Some(common::back(input)?))),
-					_ => Err(error.error("expected 'with, 'back or 'chain"))?
+					_ => Err(error.error("expected 'back, 'chain or 'with"))?
 				}
 			}
 			
