@@ -21,6 +21,10 @@ pub(crate) fn count() -> String {
 	})
 }
 
+pub(crate) trait ParseReactive: Sized {
+	fn parse(input: ParseStream, reactive: bool) -> syn::Result<Self>;
+}
+
 pub(crate) enum Object { Constructor(syn::Expr), Type(syn::TypePath) }
 
 impl Parse for Object {
@@ -79,7 +83,6 @@ impl Parse for Pass {
 
 pub(crate) fn chain(input: ParseStream) -> syn::Result<TokenStream> {
 	let mut stream = TokenStream::new();
-	
 	loop {
 		let ident = input.parse::<syn::Ident>()?;
 		
@@ -97,66 +100,66 @@ pub(crate) fn chain(input: ParseStream) -> syn::Result<TokenStream> {
 		
 		if !input.peek(syn::Token![.]) { break }
 	}
-	
 	Ok(stream)
 }
 
-pub(crate) fn content<const B: bool>(input: ParseStream) -> syn::Result<Vec<Content<B>>> {
+pub(crate) fn content(input: ParseStream, reactive: bool) -> syn::Result<Vec<Content>> {
 	let mut props = vec![];
-	while !input.is_empty() { props.push(input.parse()?) }
+	while !input.is_empty() { props.push(Content::parse(input, reactive)?) }
 	Ok(props)
 }
 
-pub(crate) struct Back<const B: bool> {
-	pub  mut0: Option<syn::Token![mut]>,
-	pub  name: syn::Ident,
-	pub build: Option<syn::Token![!]>,
-	pub props: Vec<Content<B>>,
+pub(crate) struct Back {
+	pub battrs: Vec<syn::Attribute>,
+	pub   mut0: Option<syn::Token![mut]>,
+	pub   back: syn::Ident, // name
+	pub  build: Option<syn::Token![!]>,
+	pub  props: Vec<Content>,
 }
 
-pub(crate) fn back<const B: bool>(input: ParseStream) -> syn::Result<Back<B>> {
+pub(crate) fn back(input: ParseStream, attrs: bool, reactive: bool) -> syn::Result<Back> {
+	let battrs = if attrs { input.call(syn::Attribute::parse_outer)? } else { vec![] };
 	let mut0 = input.parse()?;
 	
-	let name = input.peek(syn::Ident)
-		.then(|| input.parse()).transpose()?
-		.unwrap_or_else(|| syn::Ident::new(&count(), input.span()));
+	let back = if input.peek(syn::Ident) { input.parse()? }
+		else { syn::Ident::new(&count(), input.span()) };
 	
 	let build = input.parse()?;
 	
 	let braces; syn::braced!(braces in input);
 	let mut props = vec![];
-	while !braces.is_empty() { props.push(braces.parse()?) }
+	while !braces.is_empty() { props.push(Content::parse(&braces, reactive)?) }
 	
-	Ok(Back { mut0, name, build, props })
+	Ok(Back { battrs, mut0, back, build, props })
 }
 
-pub(crate) fn item_content<const B: bool>(input: ParseStream) -> syn::Result<(Vec<Content<B>>, Option<Back<B>>)> {
+pub(crate) fn item_content(input: ParseStream, reactive: bool) -> syn::Result<(Vec<Content>, Option<Back>)> {
 	let mut props = vec![];
 	let mut  back = None;
 	let braces; syn::braced!(braces in input);
 	
 	while !braces.is_empty() {
-		let content = braces.parse()?;
+		let content = Content::parse(&braces, reactive)?;
 		
 		if let Content::Back(token) = content {
 			if back.is_some() {
 				Err(syn::Error::new_spanned(token, "cannot use 'back more than once"))?
 			}
 			
-			back = Some(self::back(&braces)?)
+			back = Some(self::back(&braces, true, reactive)?)
 		} else { props.push(content); }
 	}
 	
 	Ok((props, back))
 }
 
-pub(crate) fn props<T: Parse>(input: ParseStream) -> syn::Result<Vec<T>> {
+pub(crate) fn props<T: ParseReactive>(input: ParseStream, reactive: bool) -> syn::Result<Vec<T>> {
 	if input.peek(syn::token::Brace) {
 		let braces; syn::braced!(braces in input);
 		let mut props = vec![];
-		while !braces.is_empty() { props.push(braces.parse()?) }
+		while !braces.is_empty() { props.push(T::parse(&braces, reactive)?) }
 		Ok(props)
-	} else { Ok(vec![input.parse()?]) }
+	} else { Ok(vec![T::parse(input, reactive)?]) }
 }
 
 pub(crate) struct Clone(syn::Ident, Option<syn::Expr>);
@@ -191,7 +194,11 @@ pub(crate) fn extend_attributes(attrs: &mut Vec<syn::Attribute>, pattrs: &[syn::
 }
 
 pub(crate) fn parse_clones(input: ParseStream) -> syn::Result<Punctuated<Clone, syn::Token![,]>> {
-	if input.peek(syn::token::Brace) {
+	let Ok(keyword) = input.parse::<syn::Lifetime>() else { return Ok(Punctuated::new()) };
+	
+	if keyword.ident != "clone" {
+		Err(syn::Error::new_spanned(keyword, "expected 'clone"))
+	} else if input.peek(syn::token::Brace) {
 		let braces; syn::braced!(braces in input);
 		braces.parse_terminated(Clone::parse, syn::Token![,])
 	} else {

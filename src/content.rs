@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
+use common::ParseReactive;
 use proc_macro2::TokenStream;
 use property::{Expr, Prop, Value, expand_expr, expand_value};
 use quote::quote;
@@ -11,21 +12,21 @@ use syn::{punctuated::Punctuated, visit_mut::VisitMut};
 use crate::{conditional, common, property, component, Visit};
 
 pub(crate) enum Binding {
-	If(Vec<conditional::If<Prop<Expr<false>>>>),
-	Match(conditional::Match<Prop<Expr<false>>>),
-	Props(Vec<Prop<Expr<false>>>),
+	If(Vec<conditional::If<Prop<Expr>>>),
+	Match(conditional::Match<Prop<Expr>>),
+	Props(Vec<Prop<Expr>>),
 }
 
-pub(crate) enum Content<const B: bool> {
+pub(crate) enum Content {
 	Back(syn::Lifetime),
-	None(Prop<Value<B>>),
-	Built(Vec<Content<B>>),
-	Component(component::Component<B>),
-	Inner(Box<conditional::Inner<Content<false>>>),
+	None(Prop<Value>),
+	Built(Vec<Content>),
+	Component(component::Component),
+	Inner(Box<conditional::Inner<Content>>),
 	Bind {
 		attrs: Vec<syn::Attribute>,
 		 cond: Option<syn::Expr>,
-		props: Vec<Prop<Expr<false>>>,
+		props: Vec<Prop<Expr>>,
 	},
 	BindOnly (Vec<syn::Attribute>, Binding),
 	BindNow  (Vec<syn::Attribute>, Binding),
@@ -38,11 +39,11 @@ pub(crate) enum Content<const B: bool> {
 	},
 }
 
-impl<const B: bool> syn::parse::Parse for Content<B> {
-	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+impl ParseReactive for Content {
+	fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Result<Self> {
 		if input.peek(syn::Token![..]) {
 			input.parse::<syn::Token![..]>()?;
-			return Ok(Content::Built(common::content(input)?))
+			return Ok(Content::Built(common::content(input, reactive)?))
 		}
 		
 		let ahead = input.fork();
@@ -50,15 +51,15 @@ impl<const B: bool> syn::parse::Parse for Content<B> {
 		
 		if let Ok(keyword) = ahead.parse::<syn::Lifetime>() {
 			match keyword.ident.to_string().as_str() {
-				"use" => return Ok(Content::Component(input.parse()?)),
+				"use" => return Ok(Content::Component(component::parse(input, reactive)?)),
 				"back" => return Ok(Content::Back(input.parse()?)),
-				"bind" | "bind_only" | "bind_now" | "binding" => if !B {
+				"bind" | "bind_only" | "bind_now" | "binding" => if !reactive {
 					return Err(input.error(format!("cannot use {keyword} here")))
 				}
 				_ => return Err(input.error(format!("unknown keyword {keyword}")))
 			}
 		} else if ahead.peek(syn::Token![if]) || ahead.peek(syn::Token![match]) {
-			return Ok(Content::Inner(input.parse()?))
+			return Ok(Content::Inner(conditional::Inner::parse(input, false)?.into()))
 		} else {
 			let is_root = ahead.peek(syn::Token![mut])
 				|| ahead.peek(syn::Token![move])
@@ -70,8 +71,8 @@ impl<const B: bool> syn::parse::Parse for Content<B> {
 				|| ahead.peek(syn::token::Brace);
 			
 			return Ok(if is_root
-			     { Content::Component(input.parse()?) }
-			else { Content::None(input.parse()?) })
+			     { Content::Component(component::parse(input, reactive)?) }
+			else { Content::None(Prop::parse(input, reactive)?) })
 		};
 		
 		let attrs = input.call(syn::Attribute::parse_outer)?;
@@ -86,26 +87,26 @@ impl<const B: bool> syn::parse::Parse for Content<B> {
 					Some(input.parse()?)
 				} else { None },
 				
-				props: common::props(input)?,
+				props: common::props(input, false)?,
 			}),
 			
 			"bind_only" => Ok(Content::BindOnly(attrs, {
 				if input.peek(syn::Token![if]) {
-					Binding::If(conditional::parse_ifs(input)?)
+					Binding::If(conditional::parse_ifs(input, false)?)
 				} else if input.peek(syn::Token![match]) {
-					Binding::Match(input.parse()?)
+					Binding::Match(conditional::Match::parse(input, false)?)
 				} else {
-					Binding::Props(common::props(input)?)
+					Binding::Props(common::props(input, false)?)
 				}
 			})),
 			
 			"bind_now" => Ok(Content::BindNow(attrs, {
 				if input.peek(syn::Token![if]) {
-					Binding::If(conditional::parse_ifs(input)?)
+					Binding::If(conditional::parse_ifs(input, false)?)
 				} else if input.peek(syn::Token![match]) {
-					Binding::Match(input.parse()?)
+					Binding::Match(conditional::Match::parse(input, false)?)
 				} else {
-					Binding::Props(common::props(input)?)
+					Binding::Props(common::props(input, false)?)
 				}
 			})),
 			
@@ -114,10 +115,7 @@ impl<const B: bool> syn::parse::Parse for Content<B> {
 				let name = input.parse()?;
 				input.parse::<syn::Token![:]>()?;
 				
-				let clones = if let Ok(keyword) = input.parse::<syn::Lifetime>() {
-					if keyword.ident != "clone" { Err(input.error("expected 'clone"))? }
-					common::parse_clones(input)?
-				} else { Punctuated::new() };
+				let clones = common::parse_clones(input)?;
 				
 				Ok(Content::Binding { attrs, mut0, name, clones, closure: input.parse()?})
 			}
@@ -127,8 +125,8 @@ impl<const B: bool> syn::parse::Parse for Content<B> {
 	}
 }
 
-pub(crate) fn expand<const B: bool>(
-	 content: Content<B>,
+pub(crate) fn expand(
+	 content: Content,
 	 objects: &mut TokenStream,
 	builders: &mut Vec<TokenStream>,
 	settings: &mut TokenStream,

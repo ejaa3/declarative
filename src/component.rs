@@ -8,7 +8,7 @@ use proc_macro2::TokenStream;
 use syn::punctuated::Punctuated;
 use crate::{content::{self, Content}, common};
 
-pub(crate) struct Component<const B: bool> {
+pub(crate) struct Component {
 	 attrs: Vec<syn::Attribute>,
 	  pass: common::Pass,
 	object: Option<common::Object>,
@@ -17,55 +17,53 @@ pub(crate) struct Component<const B: bool> {
 	 chain: Option<TokenStream>,
 	  mut0: Option<syn::Token![mut]>,
 	 build: Option<syn::Token![!]>,
-	 props: Vec<Content<B>>,
-	  back: Option<common::Back<B>>,
+	 props: Vec<Content>,
+	  back: Option<common::Back>,
 }
 
-impl<const B: bool> syn::parse::Parse for Component<B> {
-	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-		let attrs = input.call(syn::Attribute::parse_outer)?;
-		let pass = input.parse()?;
-		let error = input.fork();
-		let use0 = input.parse::<syn::Lifetime>()
-			.map(|kw| if kw.ident == "use" { Ok(true) } else { Err(error.error("expected 'use")) })
-			.unwrap_or(Ok(false))?;
-		
-		let object = (!use0).then(|| input.parse()).transpose()?;
-		let mut0 = if !use0 { input.parse()? } else { None };
-		let name = if use0 { Some(input.parse()?) } else { input.parse()? }
-			.unwrap_or_else(|| syn::Ident::new(&common::count(), input.span()));
-		
-		let mut with = None;
-		let mut chain = None;
-		
-		let (build, (props, back)) = 'back: {
-			for _ in 0..3 {
-				if !input.peek(syn::Lifetime) { break }
-				let error = input.fork();
-				
-				match input.parse::<syn::Lifetime>()?.ident.to_string().as_str() {
-					"with" => {
-						if with.is_some() { Err(input.error("expected a single 'with"))? }
-						with = Some(input.parse()?);
-					}
-					"chain" => chain = {
-						if chain.is_some() { Err(input.error("expected a single 'chain"))? }
-						Some(common::chain(input)?)
-					},
-					"back" => break 'back (None, (vec![], Some(common::back(input)?))),
-					_ => Err(error.error("expected 'back, 'chain or 'with"))?
-				}
-			}
+pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Result<Component> {
+	let attrs = input.call(syn::Attribute::parse_outer)?;
+	let pass = input.parse()?;
+	let error = input.fork();
+	let use0 = input.parse::<syn::Lifetime>()
+		.map(|kw| if kw.ident == "use" { Ok(true) } else { Err(error.error("expected 'use")) })
+		.unwrap_or(Ok(false))?;
+	
+	let object = (!use0).then(|| input.parse()).transpose()?;
+	let mut0 = if !use0 { input.parse()? } else { None };
+	let name = if use0 { Some(input.parse()?) } else { input.parse()? }
+		.unwrap_or_else(|| syn::Ident::new(&common::count(), input.span()));
+	
+	let mut with = None;
+	let mut chain = None;
+	
+	let (build, (props, back)) = 'back: {
+		for _ in 0..3 {
+			if !input.peek(syn::Lifetime) { break }
+			let error = input.fork();
 			
-			(input.parse()?, common::item_content(input)?)
-		};
+			match input.parse::<syn::Lifetime>()?.ident.to_string().as_str() {
+				"with" => {
+					if with.is_some() { Err(input.error("expected a single 'with"))? }
+					with = Some(input.parse()?);
+				}
+				"chain" => chain = {
+					if chain.is_some() { Err(input.error("expected a single 'chain"))? }
+					Some(common::chain(input)?)
+				},
+				"back" => break 'back (None, (vec![], Some(common::back(input, false, reactive)?))),
+				_ => Err(error.error("expected 'back, 'chain or 'with"))?
+			}
+		}
 		
-		Ok(Component { attrs, pass, object, name, with, chain, mut0, build, props, back })
-	}
+		(input.parse()?, common::item_content(input, reactive)?)
+	};
+	
+	Ok(Component { attrs, pass, object, name, with, chain, mut0, build, props, back })
 }
 
-pub(crate) fn expand<const B: bool>(
-	Component { mut attrs, mut0, object, name, with, chain, pass, build, props, back }: Component<B>,
+pub(crate) fn expand(
+	Component { mut attrs, mut0, object, name, with, chain, pass, build, props, back }: Component,
 	   objects: &mut TokenStream,
 	  builders: &mut Vec<TokenStream>,
 	  settings: &mut TokenStream,
@@ -92,7 +90,9 @@ pub(crate) fn expand<const B: bool>(
 		
 		let common::Pass(pass) = pass;
 		
-		if let Some(common::Back { mut0, name: back, build, props }) = back {
+		if let Some(common::Back { battrs, mut0, back, build, props }) = back {
+			attrs.extend(battrs);
+			
 			let (semi, index) = if build.is_some() {
 				builders.push(TokenStream::new());
 				(None, Some(builders.len() - 1))

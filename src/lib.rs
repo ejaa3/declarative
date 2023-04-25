@@ -30,14 +30,16 @@ impl Parse for Block {
 	}
 }
 
-enum Content { Root(component::Component<true>), Code(TokenStream2) }
+enum Content { Root(component::Component), Code(TokenStream2) }
 
 impl Parse for Content {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
 		if input.peek(syn::Token![..]) {
 			input.parse::<syn::Token![..]>()?;
 			Ok(Content::Code(input.parse()?))
-		} else { Ok(Content::Root(input.parse()?)) }
+		} else {
+			Ok(Content::Root(component::parse(input, true)?))
+		}
 	}
 }
 

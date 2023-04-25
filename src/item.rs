@@ -9,7 +9,7 @@ use quote::quote;
 use syn::punctuated::Punctuated;
 use crate::{content::{self, Content}, common};
 
-pub(crate) struct Item<const B: bool> {
+pub(crate) struct Item {
 	  mut0: Option<syn::Token![mut]>,
 	object: Option<common::Object>,
 	  name: syn::Ident,
@@ -17,75 +17,73 @@ pub(crate) struct Item<const B: bool> {
 	 chain: Option<TokenStream>,
 	  pass: common::Pass,
 	 build: Option<syn::Token![!]>,
-	 props: Vec<Content<B>>,
-	  back: Option<common::Back<B>>,
+	 props: Vec<Content>,
+	  back: Option<common::Back>,
 }
 
-impl<const B: bool> syn::parse::Parse for Item<B> {
-	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-		let pass = input.parse()?;
-		let error = input.fork();
-		let use0 = input.parse::<syn::Lifetime>()
-			.map(|kw| if kw.ident == "use" { Ok(true) } else { Err(error.error("expected 'use")) })
-			.unwrap_or(Ok(false))?;
-		
-		let object = (!use0).then(|| input.parse()).transpose()?;
-		let mut0 = if !use0 { input.parse()? } else { None };
-		let name = if use0 { Some(input.parse()?) } else { input.parse()? }
-			.unwrap_or_else(|| syn::Ident::new(&common::count(), input.span()));
-		let mut wrap = None;
-		let mut chain = None;
-		
-		let (build, (props, back)) = 'back: {
-			for _ in 0..3 {
-				if !input.peek(syn::Lifetime) { break }
-				let error = input.fork();
-				
-				match input.parse::<syn::Lifetime>()?.ident.to_string().as_str() {
-					"chain" => chain = {
-						if chain.is_some() { Err(input.error("expected a single 'chain"))? }
-						Some(common::chain(input)?)
-					},
-					"wrap" => wrap = {
-						if wrap.is_some() { Err(input.error("expected a single 'wrap"))? }
-						
-						if input.peek(syn::token::Paren) {
-							let parens; syn::parenthesized!(parens in input);
-							Some(parens.parse_terminated(syn::Path::parse, syn::Token![,])?)
-						} else {
-							let mut wrap = Punctuated::new();
-							wrap.push(input.parse()?);
-							Some(wrap)
-						}
-					},
-					"back" => break 'back (None, (vec![], Some(common::back(input)?))),
-					_ => Err(error.error("expected 'back, 'chain or 'wrap"))?
-				}
-			}
+pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Result<Item> {
+	let pass = input.parse()?;
+	let error = input.fork();
+	let use0 = input.parse::<syn::Lifetime>()
+		.map(|kw| if kw.ident == "use" { Ok(true) } else { Err(error.error("expected 'use")) })
+		.unwrap_or(Ok(false))?;
+	
+	let object = (!use0).then(|| input.parse()).transpose()?;
+	let mut0 = if !use0 { input.parse()? } else { None };
+	let name = if use0 { Some(input.parse()?) } else { input.parse()? }
+		.unwrap_or_else(|| syn::Ident::new(&common::count(), input.span()));
+	let mut wrap = None;
+	let mut chain = None;
+	
+	let (build, (props, back)) = 'back: {
+		for _ in 0..3 {
+			if !input.peek(syn::Lifetime) { break }
+			let error = input.fork();
 			
-			(input.parse()?, common::item_content(input)?)
-		};
+			match input.parse::<syn::Lifetime>()?.ident.to_string().as_str() {
+				"chain" => chain = {
+					if chain.is_some() { Err(input.error("expected a single 'chain"))? }
+					Some(common::chain(input)?)
+				},
+				"wrap" => wrap = {
+					if wrap.is_some() { Err(input.error("expected a single 'wrap"))? }
+					
+					if input.peek(syn::token::Paren) {
+						let parens; syn::parenthesized!(parens in input);
+						Some(parens.parse_terminated(syn::Path::parse_mod_style, syn::Token![,])?) // TODO non-mod style
+					} else {
+						let mut wrap = Punctuated::new();
+						wrap.push(input.parse()?);
+						Some(wrap)
+					}
+				},
+				"back" => break 'back (None, (vec![], Some(common::back(input, false, reactive)?))),
+				_ => Err(error.error("expected 'back, 'chain or 'wrap"))?
+			}
+		}
 		
-		let wrap = wrap.unwrap_or_default();
-		
-		Ok(Item { mut0, object, name, wrap, chain, pass, build, props, back })
-	}
+		(input.parse()?, common::item_content(input, reactive)?)
+	};
+	
+	let wrap = wrap.unwrap_or_default();
+	
+	Ok(Item { mut0, object, name, wrap, chain, pass, build, props, back })
 }
 
-pub(crate) fn expand<const B: bool>(
-	Item { mut0, object, name, wrap, chain, pass, build, props, back }: Item<B>,
-	 objects: &mut TokenStream,
-	builders: &mut Vec<TokenStream>,
-	settings: &mut TokenStream,
-	bindings: &mut TokenStream,
-	    root: &[&syn::Ident],
-	   attrs: Vec<syn::Attribute>,
-	   ident: syn::Ident,
-	    gens: Option<syn::AngleBracketedGenericArguments>,
-	    args: Punctuated<syn::Expr, syn::Token![,]>,
-	    rest: Option<TokenStream>,
-	 builder: Option<usize>,
-	   field: bool,
+pub(crate) fn expand(
+	Item { mut0, object, name, wrap, chain, pass, build, props, back }: Item,
+	  objects: &mut TokenStream,
+	 builders: &mut Vec<TokenStream>,
+	 settings: &mut TokenStream,
+	 bindings: &mut TokenStream,
+	     root: &[&syn::Ident],
+	mut attrs: Vec<syn::Attribute>,
+	    ident: syn::Ident,
+	     gens: Option<syn::AngleBracketedGenericArguments>,
+	     args: Punctuated<syn::Expr, syn::Token![,]>,
+	     rest: Option<TokenStream>,
+	  builder: Option<usize>,
+	    field: bool,
 ) {
 	let new_builder = object.map(|object| common::expand_object(
 		object, objects, builders, &attrs, mut0, &name, build.is_some()
@@ -105,7 +103,9 @@ pub(crate) fn expand<const B: bool>(
 		settings.extend(quote![#(#attrs)* #(#root.)* #ident = #set #chain;])
 	} else if let Some(index) = builder {
 		builders[index].extend(quote![.#ident #(::#gens)* (#args #set #chain, #rest)])
-	} else if let Some(common::Back { mut0, name, build, props }) = back {
+	} else if let Some(common::Back { battrs, mut0, back, build, props }) = back {
+		attrs.extend(battrs);
+		
 		let (semi, index) = if build.is_some() {
 			builders.push(TokenStream::new());
 			(None, Some(builders.len() - 1))
@@ -114,11 +114,11 @@ pub(crate) fn expand<const B: bool>(
 		};
 		
 		settings.extend(quote! {
-			#(#attrs)* let #mut0 #name = #(#root.)* #ident #(::#gens)* (#args #set #chain, #rest) #semi
+			#(#attrs)* let #mut0 #back = #(#root.)* #ident #(::#gens)* (#args #set #chain, #rest) #semi
 		});
 		
 		props.into_iter().for_each(|keyword| content::expand(
-			keyword, objects, builders, settings, bindings, &attrs, &[&name], index
+			keyword, objects, builders, settings, bindings, &attrs, &[&back], index
 		));
 		
 		if let Some(index) = index {
