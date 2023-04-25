@@ -24,7 +24,7 @@ declarative::view! { // outer syntax
 	// you can add more objects here
 	String::new() mut string { /* can mutate here */ }
 	
-	.. // the double dot ends the view and starts the code where it will be inserted
+	.. // the double dot ends the view and starts the code where it will be expanded
 	
 	fn outer() { // preferably a small function
 		println!("[OUTER]");
@@ -60,8 +60,8 @@ declarative::view! { // assignments
 // for “component assignment” to work, the “composable object”
 // must have a method called “as_composable_add_component”
 impl ComposableString for String {
-	fn as_composable_add_component(&mut self, string: String, arg: &str) {
-		self.push_str(arg);
+	fn as_composable_add_component(&mut self, string: String, with: &str) {
+		self.push_str(with);
 		self.push_str(&string);
 	}
 }
@@ -127,5 +127,5 @@ trait ComposableString {
 			}
 		}
 		~~~
-	*/ fn as_composable_add_component(&mut self, string: String, arg: &str);
+	*/ fn as_composable_add_component(&mut self, string: String, with: &str);
 }

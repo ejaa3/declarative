@@ -4,9 +4,38 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
+// this “example” shows some features that the macro supports
+// (not exhaustively) but have not been properly exemplified:
+
 #![allow(unused)]
 
 use std::rc::Rc;
+
+declarative::view! { // conditionals:
+	gtk::Box {
+		if "this".is_empty() {
+			set_orientation: gtk::Orientation::Vertical
+			gtk::Label { set_label: "Hello" }
+		} else {
+			set_orientation: gtk::Orientation::Horizontal
+			gtk::Label { set_label: "World!" }
+		}
+		
+		match "something" {
+			"Hello"  => set_spacing: 10
+			"World!" => gtk::Label { set_label: "Hello" }
+			_ => {
+				set_spacing: 10
+				gtk::Label { set_label: "World!" }
+			}
+		}
+		
+		// 'bind, 'bind_only and 'bind_now allow conditionals,
+		// but do not allow assigning objects or components
+		//
+		// 'bind only allows if without else and without inner ifs
+	} ..
+}
 
 struct Type {
 	closure: Box<dyn Fn() -> Option<()>>,
@@ -32,32 +61,6 @@ impl Type {
 	fn method_with_generic<T: Default>(&self) -> T { T::default() }
 	fn method_with_generic_and_arg<T: Default>(&self, arg: T) -> T { arg }
 	fn append(&self, other: Option<&Type>) { }
-}
-
-declarative::view! {
-	gtk::Box { // conditionals:
-		if "this".is_empty() {
-			set_orientation: gtk::Orientation::Vertical
-			gtk::Label { set_label: "Hello" }
-		} else {
-			set_orientation: gtk::Orientation::Horizontal
-			gtk::Label { set_label: "World!" }
-		}
-		
-		match "something" {
-			"Hello"  => set_spacing: 10
-			"World!" => gtk::Label { set_label: "Hello" }
-			_ => {
-				set_spacing: 10
-				gtk::Label { set_label: "World!" }
-			}
-		}
-		
-		// 'bind, 'bind_only and 'bind_now allow conditionals,
-		// but do not allow assigning objects or components
-		//
-		// 'bind only allows if without else and without inner ifs
-	} ..
 }
 
 declarative::view! {

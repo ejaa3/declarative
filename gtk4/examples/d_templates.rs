@@ -27,7 +27,7 @@ impl std::ops::Deref for BoxTemplate {
 			gtk::Label { } // “component assignment” is possible
 		}
 		BoxTemplate { // without Deref
-			root { // root required
+			root -> { // root -> { } required
 				set_spacing: 10
 				gtk::Label { }
 			}
@@ -132,6 +132,7 @@ declarative::view! {
 		}
 	} ..
 	
+	// we create states and channels for both “templated components”:
 	fn window(app: &gtk::Application) -> gtk::ApplicationWindow {
 		let (sender_1, receiver_1) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
 		let (sender_2, receiver_2) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
@@ -166,7 +167,7 @@ fn main() -> glib::ExitCode {
 macro_rules! send {
 	($expr:expr => $sender:ident) => {
 		$sender.send($expr).unwrap_or_else(
-			move |error| glib::g_critical!("c_reactivity", "{error}")
+			move |error| glib::g_critical!("d_templates", "{error}")
 		)
 	};
 }

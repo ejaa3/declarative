@@ -29,12 +29,13 @@ declarative::view! { // component factory
 		gtk::Label {
 			set_label: &format!("This is the {nth} Component")
 			'bind_only set_label: &format!("The {nth} count is: {}", state.count)
-		}
+		} // at this point the gtk::Label is appended to the gtk::Box, so...
 		
 		// 'binding here to not clone the gtk::Label
 		'binding update_view: move |state: &State| { bindings!(); }
 		
 		gtk::Button::with_label("Increase") {
+			// for several clones use braces:
 			connect_clicked: 'clone {sender, parent} move |_| {
 				send!(Msg::Increase => sender);
 				send!(nth => parent);
@@ -65,7 +66,7 @@ declarative::view! { // component factory
 	}
 }
 
-declarative::view! {
+declarative::view! { // the main component
 	gtk::ApplicationWindow window !{
 		application: app
 		title: "Components"
@@ -121,7 +122,7 @@ fn main() {
 macro_rules! send {
 	($expr:expr => $sender:ident) => {
 		$sender.send($expr).unwrap_or_else(
-			move |error| glib::g_critical!("c_reactivity", "{error}")
+			move |error| glib::g_critical!("e_components", "{error}")
 		)
 	};
 }

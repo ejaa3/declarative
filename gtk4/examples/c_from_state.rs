@@ -60,7 +60,7 @@ declarative::view! {
 				// now instead of sending messages we have to do:
 				connect_clicked: 'clone state move |_| state.update(
 					|state| state.count.set(state.count.get().wrapping_add(1))
-				) // you may prefer a macro instead of calling state.update(|state| { })
+				) // you may prefer a macro instead of writing 'clone state move |_| state.update(|state| { })
 			}
 			
 			gtk::Button::with_label("Decrease") 'with (1, 1, 1, 1) {

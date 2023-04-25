@@ -23,7 +23,7 @@ fn update_state(state: &mut State, msg: Msg) {
 macro_rules! send { // a macro to log send errors
 	($expr:expr => $sender:ident) => {
 		$sender.send($expr).unwrap_or_else(
-			move |error| glib::g_critical!("c_reactivity", "{error}")
+			move |error| glib::g_critical!("b_reactivity", "{error}")
 		)
 	};
 }
@@ -31,12 +31,14 @@ macro_rules! send { // a macro to log send errors
 declarative::view! {
 	gtk::ApplicationWindow::new(app) window {
 		set_title: Some("Count unchanged")
+		// if it is necessary to wrap the assigned object,
+		// such as Some(object) in this case, use 'wrap:
 		set_titlebar => gtk::HeaderBar 'wrap Some { }
 		
 		// use 'bind_only to react to changes (do not assign at startup):
 		'bind_only if state.count % 2 == 0 {
 			set_title: Some("The value is even")
-		} else {
+		} else { // in fact several property assignments can be made here
 			set_title: Some("The value is odd")
 		}
 		
@@ -57,9 +59,12 @@ declarative::view! {
 			
 			// “property or object assignments” only assign the first argument of a method;
 			// if the method requires multiple arguments, you can pass the rest in square brackets:
+			//
+			// since the assignee can be in any position, you must specify it with a double dot;
+			// if it must go at the end, don't do it; i.e. ["initial arguments", .. "final arguments"]
 			attach[.. 0, 0, 2, 1] => gtk::Label my_label {
 				set_hexpand: true
-				// Use 'bind to react to changes (assign at startup):
+				// use 'bind to react to changes (assign at startup):
 				'bind set_label: &format!("The count is: {}", state.count)
 			}
 			
@@ -84,7 +89,7 @@ declarative::view! {
 		let mut state = State { count: 0 };
 		let (sender, receiver) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
 		
-		expand_view_here!(); // insert the view code here
+		expand_view_here!();
 		
 		receiver.attach(None, move |msg| {
 			update_state(&mut state, msg);
