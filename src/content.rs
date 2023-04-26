@@ -18,7 +18,7 @@ pub(crate) enum Binding {
 }
 
 pub(crate) enum Content {
-	Back(syn::Lifetime),
+	Back(common::Back),
 	None(Prop<Value>),
 	Built(Vec<Content>),
 	Component(component::Component),
@@ -40,28 +40,30 @@ pub(crate) enum Content {
 }
 
 impl ParseReactive for Content {
-	fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Result<Self> {
-		if input.peek(syn::Token![..]) {
-			input.parse::<syn::Token![..]>()?;
+	fn parse(input: syn::parse::ParseStream,
+	        _attrs: Option<Vec<syn::Attribute>>,
+	      reactive: bool,
+	) -> syn::Result<Self> {
+		if input.parse::<syn::Token![..]>().is_ok() {
 			return Ok(Content::Built(common::content(input, reactive)?))
 		}
 		
-		let ahead = input.fork();
-		ahead.call(syn::Attribute::parse_outer)?;
+		let attrs = input.call(syn::Attribute::parse_outer)?;
 		
-		if let Ok(keyword) = ahead.parse::<syn::Lifetime>() {
+		let keyword = if let Ok(keyword) = input.parse::<syn::Lifetime>() {
 			match keyword.ident.to_string().as_str() {
-				"use" => return Ok(Content::Component(component::parse(input, reactive)?)),
-				"back" => return Ok(Content::Back(input.parse()?)),
+				"use" => return Ok(Content::Component(component::parse(input, attrs, reactive, true, false)?)),
+				"back" => return Ok(Content::Back(common::parse_back(input, keyword, attrs, reactive)?)),
 				"bind" | "bind_only" | "bind_now" | "binding" => if !reactive {
-					return Err(input.error(format!("cannot use {keyword} here")))
-				}
-				_ => return Err(input.error(format!("unknown keyword {keyword}")))
+					return Err(syn::Error::new_spanned(&keyword, format!("cannot use {keyword} here")))
+				} else { keyword }
+				_ => return Err(syn::Error::new_spanned(&keyword, format!("unknown keyword {keyword}")))
 			}
-		} else if ahead.peek(syn::Token![if]) || ahead.peek(syn::Token![match]) {
-			return Ok(Content::Inner(conditional::Inner::parse(input, false)?.into()))
+		} else if input.peek(syn::Token![if]) || input.peek(syn::Token![match]) {
+			return Ok(Content::Inner(conditional::Inner::parse(input, Some(attrs), false)?.into()))
 		} else {
-			let is_root = ahead.peek(syn::Token![mut])
+			let ahead = input.fork();
+			let is_component = ahead.peek(syn::Token![mut])
 				|| ahead.peek(syn::Token![move])
 				|| ahead.parse::<common::Object>().is_ok()
 				&& ahead.peek(syn::Ident)
@@ -70,13 +72,10 @@ impl ParseReactive for Content {
 				&& ahead.peek2(syn::token::Brace)
 				|| ahead.peek(syn::token::Brace);
 			
-			return Ok(if is_root
-			     { Content::Component(component::parse(input, reactive)?) }
-			else { Content::None(Prop::parse(input, reactive)?) })
+			return Ok(if is_component
+			     { Content::Component(component::parse(input, attrs, reactive, false, false)?) }
+			else { Content::None(Prop::parse(input, Some(attrs), reactive)?) })
 		};
-		
-		let attrs = input.call(syn::Attribute::parse_outer)?;
-		let keyword = input.parse::<syn::Lifetime>()?;
 		
 		match keyword.ident.to_string().as_str() {
 			"bind" => Ok(Content::Bind {
@@ -94,7 +93,7 @@ impl ParseReactive for Content {
 				if input.peek(syn::Token![if]) {
 					Binding::If(conditional::parse_ifs(input, false)?)
 				} else if input.peek(syn::Token![match]) {
-					Binding::Match(conditional::Match::parse(input, false)?)
+					Binding::Match(conditional::Match::parse(input, None, false)?)
 				} else {
 					Binding::Props(common::props(input, false)?)
 				}
@@ -104,7 +103,7 @@ impl ParseReactive for Content {
 				if input.peek(syn::Token![if]) {
 					Binding::If(conditional::parse_ifs(input, false)?)
 				} else if input.peek(syn::Token![match]) {
-					Binding::Match(conditional::Match::parse(input, false)?)
+					Binding::Match(conditional::Match::parse(input, None, false)?)
 				} else {
 					Binding::Props(common::props(input, false)?)
 				}
@@ -136,9 +135,7 @@ pub(crate) fn expand(
 	 builder: Option<usize>,
 ) {
 	match content {
-		Content::Back(token) => objects.extend(
-			syn::Error::new_spanned(token, "cannot use 'back").into_compile_error()
-		),
+		Content::Back(back) => back.do_not_use(objects),
 		Content::None(prop) => expand_value(
 			prop, objects, builders, settings, bindings, &pattrs, name, builder
 		),

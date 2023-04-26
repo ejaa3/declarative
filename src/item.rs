@@ -37,18 +37,19 @@ pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Resu
 	
 	let (build, (props, back)) = 'back: {
 		for _ in 0..3 {
-			if !input.peek(syn::Lifetime) { break }
-			let error = input.fork();
+			let Ok(keyword) = input.parse::<syn::Lifetime>() else { break };
 			
-			match input.parse::<syn::Lifetime>()?.ident.to_string().as_str() {
-				"chain" => chain = {
-					if chain.is_some() { Err(input.error("expected a single 'chain"))? }
-					Some(common::chain(input)?)
-				},
-				"wrap" => wrap = {
-					if wrap.is_some() { Err(input.error("expected a single 'wrap"))? }
-					
-					if input.peek(syn::token::Paren) {
+			match keyword.ident.to_string().as_str() {
+				"back" => break 'back (None, (vec![], Some(
+					common::parse_back(input, keyword, vec![], reactive)?
+				))),
+				
+				"chain" => if chain.is_some() {
+					Err(syn::Error::new_spanned(keyword, "expected a single 'chain"))?
+				} else { chain = Some(common::chain(input)?) }
+				
+				"wrap" => if wrap.is_none() {
+					wrap = if input.peek(syn::token::Paren) {
 						let parens; syn::parenthesized!(parens in input);
 						Some(parens.parse_terminated(syn::Path::parse_mod_style, syn::Token![,])?) // TODO non-mod style
 					} else {
@@ -56,13 +57,13 @@ pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Resu
 						wrap.push(input.parse()?);
 						Some(wrap)
 					}
-				},
-				"back" => break 'back (None, (vec![], Some(common::back(input, false, reactive)?))),
+				} else { Err(input.error("expected a single 'wrap"))? }
+				
 				_ => Err(error.error("expected 'back, 'chain or 'wrap"))?
 			}
 		}
 		
-		(input.parse()?, common::item_content(input, reactive)?)
+		(input.parse()?, common::object_content(input, reactive, false)?)
 	};
 	
 	let wrap = wrap.unwrap_or_default();
@@ -99,11 +100,13 @@ pub(crate) fn expand(
 	let mut set = quote![#pass #name];
 	wrap.into_iter().for_each(|wrap| { set = quote![#wrap(#set)] });
 	
-	if field {
+	if field { // TODO builder?
+		if let Some(back) = back { back.do_not_use(objects) }
 		settings.extend(quote![#(#attrs)* #(#root.)* #ident = #set #chain;])
 	} else if let Some(index) = builder {
+		if let Some(back) = back { back.do_not_use(objects) }
 		builders[index].extend(quote![.#ident #(::#gens)* (#args #set #chain, #rest)])
-	} else if let Some(common::Back { battrs, mut0, back, build, props }) = back {
+	} else if let Some(common::Back { battrs, mut0, back, build, props, .. }) = back {
 		attrs.extend(battrs);
 		
 		let (semi, index) = if build.is_some() {

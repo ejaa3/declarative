@@ -5,7 +5,6 @@
  */
 
 use proc_macro2::TokenStream;
-use syn::punctuated::Punctuated;
 use crate::{content::{self, Content}, common};
 
 pub(crate) struct Component {
@@ -21,14 +20,14 @@ pub(crate) struct Component {
 	  back: Option<common::Back>,
 }
 
-pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Result<Component> {
-	let attrs = input.call(syn::Attribute::parse_outer)?;
+pub(crate) fn parse(
+	   input: syn::parse::ParseStream,
+	   attrs: Vec<syn::Attribute>,
+	reactive: bool,
+	    use0: bool,
+	    root: bool,
+) -> syn::Result<Component> {
 	let pass = input.parse()?;
-	let error = input.fork();
-	let use0 = input.parse::<syn::Lifetime>()
-		.map(|kw| if kw.ident == "use" { Ok(true) } else { Err(error.error("expected 'use")) })
-		.unwrap_or(Ok(false))?;
-	
 	let object = (!use0).then(|| input.parse()).transpose()?;
 	let mut0 = if !use0 { input.parse()? } else { None };
 	let name = if use0 { Some(input.parse()?) } else { input.parse()? }
@@ -39,24 +38,30 @@ pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Resu
 	
 	let (build, (props, back)) = 'back: {
 		for _ in 0..3 {
-			if !input.peek(syn::Lifetime) { break }
-			let error = input.fork();
+			let Ok(keyword) = input.parse::<syn::Lifetime>() else { break };
 			
-			match input.parse::<syn::Lifetime>()?.ident.to_string().as_str() {
-				"with" => {
-					if with.is_some() { Err(input.error("expected a single 'with"))? }
-					with = Some(input.parse()?);
-				}
-				"chain" => chain = {
-					if chain.is_some() { Err(input.error("expected a single 'chain"))? }
-					Some(common::chain(input)?)
-				},
-				"back" => break 'back (None, (vec![], Some(common::back(input, false, reactive)?))),
-				_ => Err(error.error("expected 'back, 'chain or 'with"))?
+			if root {
+				return Err(syn::Error::new_spanned(keyword, "cannot use 'keywords here"))
+			}
+			
+			match keyword.ident.to_string().as_str() {
+				"back" => break 'back (None, (vec![], Some(
+					common::parse_back(input, keyword, vec![], reactive)?
+				))),
+				
+				"chain" => if chain.is_some() {
+					Err(syn::Error::new_spanned(keyword, "expected a single 'chain"))?
+				} else { chain = Some(common::chain(input)?) }
+				
+				"with" => if with.is_some() {
+					Err(syn::Error::new_spanned(keyword, "expected a single 'with"))?
+				} else { with = Some(input.parse()?) }
+				
+				_ => Err(syn::Error::new_spanned(keyword, "expected 'back, 'chain or 'with"))?
 			}
 		}
 		
-		(input.parse()?, common::item_content(input, reactive)?)
+		(input.parse()?, common::object_content(input, reactive, root)?)
 	};
 	
 	Ok(Component { attrs, pass, object, name, with, chain, mut0, build, props, back })
@@ -81,45 +86,39 @@ pub(crate) fn expand(
 		keyword, objects, builders, settings, bindings, &attrs, &[&name], builder
 	));
 	
-	if let Some(composable) = composable {
-		let with = if let Some(with) = with { with } else {
-			syn::Expr::Tuple(syn::ExprTuple {
-				attrs: vec![], paren_token: syn::token::Paren::default(), elems: Punctuated::new()
-			})
+	let Some(composable) = composable else { return };
+	let with = with.unwrap_or_else(|| syn::Expr::Verbatim(quote::quote!(())));
+	let common::Pass(pass) = pass;
+	
+	if let Some(common::Back { token: _, battrs, mut0, back, build, props }) = back {
+		attrs.extend(battrs);
+		
+		let (semi, index) = if build.is_some() {
+			builders.push(TokenStream::new());
+			(None, Some(builders.len() - 1))
+		} else {
+			(Some(<syn::Token![;]>::default()), None)
 		};
 		
-		let common::Pass(pass) = pass;
+		settings.extend(quote::quote! {
+			#(#attrs)*
+			let #mut0 #back = #(#composable.)* as_composable_add_component(
+				#pass #name #chain, #with
+			) #semi
+		});
 		
-		if let Some(common::Back { battrs, mut0, back, build, props }) = back {
-			attrs.extend(battrs);
-			
-			let (semi, index) = if build.is_some() {
-				builders.push(TokenStream::new());
-				(None, Some(builders.len() - 1))
-			} else {
-				(Some(<syn::Token![;]>::default()), None)
-			};
-			
-			settings.extend(quote::quote! {
-				#(#attrs)*
-				let #mut0 #back = #(#composable.)* as_composable_add_component(
-					#pass #name #chain, #with
-				) #semi
-			});
-			
-			props.into_iter().for_each(|keyword| content::expand(
-				keyword, objects, builders, settings, bindings, &attrs, &[&back], index
-			));
-			
-			if let Some(index) = index {
-				let builder = builders.remove(index);
-				settings.extend(quote::quote![#builder;])
-			}
-		} else {
-			settings.extend(quote::quote! {
-				#(#attrs)*
-				#(#composable.)* as_composable_add_component(#pass #name #chain, #with);
-			});
+		props.into_iter().for_each(|keyword| content::expand(
+			keyword, objects, builders, settings, bindings, &attrs, &[&back], index
+		));
+		
+		if let Some(index) = index {
+			let builder = builders.remove(index);
+			settings.extend(quote::quote![#builder;])
 		}
+	} else {
+		settings.extend(quote::quote! {
+			#(#attrs)*
+			#(#composable.)* as_composable_add_component(#pass #name #chain, #with);
+		});
 	}
 }

@@ -6,7 +6,6 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::parse::ParseStream;
 use syn::punctuated::Punctuated;
 use super::{common, content::{self, Content}, item};
 
@@ -20,8 +19,11 @@ pub(crate) struct Prop<T> {
 }
 
 impl<T: common::ParseReactive> common::ParseReactive for Prop<T> {
-	fn parse(input: ParseStream, reactive: bool) -> syn::Result<Prop<T>> {
-		let attrs = input.call(syn::Attribute::parse_outer)?;
+	fn parse(input: syn::parse::ParseStream,
+	         attrs: Option<Vec<syn::Attribute>>,
+	      reactive: bool,
+	) -> syn::Result<Prop<T>> {
+		let attrs = attrs.unwrap_or_default();
 		let ident = input.parse()?;
 		
 		let gens = if input.peek(syn::Token![::]) {
@@ -53,7 +55,7 @@ impl<T: common::ParseReactive> common::ParseReactive for Prop<T> {
 			args.push_punct(Default::default());
 		}
 		
-		Ok(Prop { attrs, ident, gens, args, rest, value: T::parse(input, reactive)? })
+		Ok(Prop { attrs, ident, gens, args, rest, value: T::parse(input, None, reactive)? })
 	}
 }
 
@@ -64,7 +66,10 @@ pub(crate) enum Value {
 }
 
 impl common::ParseReactive for Value {
-	fn parse(input: ParseStream, reactive: bool) -> syn::Result<Self> {
+	fn parse(input: syn::parse::ParseStream,
+	        _attrs: Option<Vec<syn::Attribute>>,
+	      reactive: bool,
+	) -> syn::Result<Self> {
 		let ahead = input.lookahead1();
 		
 		if  ahead.peek (syn::Token![:])
@@ -73,7 +78,7 @@ impl common::ParseReactive for Value {
 		&&  input.peek3(syn::token::Brace)
 		||  input.peek (syn::Token![=])
 		&& !input.peek2(syn::Token![>]) {
-			Ok(Value::Expr(Expr::parse(input, reactive)?))
+			Ok(Value::Expr(Expr::parse(input, None, reactive)?))
 		} else if ahead.peek(syn::Token![=>]) {
 			input.parse::<syn::Token![=>]>()?;
 			Ok(Value::ItemCall(item::parse(input, reactive)?))
@@ -140,15 +145,21 @@ pub(crate) enum Expr {
 }
 
 impl common::ParseReactive for Expr {
-	fn parse(input: ParseStream, reactive: bool) -> syn::Result<Self> {
+	fn parse(input: syn::parse::ParseStream,
+	        _attrs: Option<Vec<syn::Attribute>>,
+	      reactive: bool,
+	) -> syn::Result<Self> {
 		let ahead = input.lookahead1();
 		
-		let back = ||
-			if let Ok("back") = input.fork().parse::<syn::Lifetime>()
-				.map(|keyword| keyword.ident.to_string()).as_deref() {
-					input.parse::<syn::Lifetime>()?;
-					Ok(Some(common::back(input, false, reactive)?))
-				} else { Ok::<_, syn::Error>(None) };
+		let back = || {
+			let Ok(keyword) = input.fork().parse::<syn::Lifetime>()
+				else { return Ok::<_, syn::Error>(None) };
+			
+			if keyword.ident == "back" {
+				input.parse::<syn::Lifetime>()?;
+				Ok(Some(common::parse_back(input, keyword, vec![], reactive)?))
+			} else { Ok(None) }
+		};
 		
 		if ahead.peek(syn::Token![:]) {
 			input.parse::<syn::Token![:]>()?;
@@ -220,33 +231,36 @@ pub(crate) fn expand_expr(
 		Expr::Edit(..) => unreachable!(),
 	};
 	
-	if let Some(common::Back { battrs: _, mut0, back, build, props }) = back {
-		let (semi, index) = if build.is_some() {
-			builders.push(TokenStream::new());
-			(None, Some(builders.len() - 1))
-		} else {
-			(Some(<syn::Token![;]>::default()), None)
-		};
-		
-		settings.extend(quote::quote! {
-			#(#pattrs)* #(#attrs)*
-			let #mut0 #back = #(#name.)* #ident #(::#gens)* (#args #assigned #rest) #semi
-		});
-		
-		common::extend_attributes(&mut attrs, pattrs);
-		props.into_iter().for_each(|keyword| content::expand(
-			keyword, objects, builders, settings, bindings, &attrs, &[&back], index
-		));
-		
-		if let Some(index) = index {
-			let builder = builders.remove(index);
-			settings.extend(quote::quote![#builder;])
-		}
-		
-		return None
-	} else {
-		if build { return Some(quote![.#ident #(::#gens)* (#args #assigned #rest)]) }
-		
-		Some(quote![#(#pattrs)* #(#attrs)* #(#name.)* #ident #(::#gens)* (#args #assigned #rest);])
+	if build {
+		if let Some(back) = back { back.do_not_use(objects) }
+		return Some(quote![.#ident #(::#gens)* (#args #assigned #rest)])
 	}
+	
+	let Some(common::Back { mut0, back, build, props, .. }) = back else {
+		return Some(quote![#(#pattrs)* #(#attrs)* #(#name.)* #ident #(::#gens)* (#args #assigned #rest);])
+	};
+	
+	let (semi, index) = if build.is_some() {
+		builders.push(TokenStream::new());
+		(None, Some(builders.len() - 1))
+	} else {
+		(Some(<syn::Token![;]>::default()), None)
+	};
+	
+	settings.extend(quote::quote! {
+		#(#pattrs)* #(#attrs)*
+		let #mut0 #back = #(#name.)* #ident #(::#gens)* (#args #assigned #rest) #semi
+	});
+	
+	common::extend_attributes(&mut attrs, pattrs);
+	props.into_iter().for_each(|keyword| content::expand(
+		keyword, objects, builders, settings, bindings, &attrs, &[&back], index
+	));
+	
+	if let Some(index) = index {
+		let builder = builders.remove(index);
+		settings.extend(quote::quote![#builder;])
+	}
+	
+	None
 }

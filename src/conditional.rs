@@ -7,10 +7,9 @@
 use common::ParseReactive;
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::parse::ParseStream;
 use crate::{property::{self, Prop, Expr}, common, content};
 
-pub(crate) struct If<T: Expand> {
+pub(crate) struct If<T> {
 	else0: Option<syn::Token![else]>,
 	  if0: Option<syn::Token![if]>,
 	 expr: Option<syn::Expr>,
@@ -18,7 +17,10 @@ pub(crate) struct If<T: Expand> {
 }
 
 impl<T: Expand> ParseReactive for If<T> {
-	fn parse(input: ParseStream, reactive: bool) -> syn::Result<Self> {
+	fn parse(input: syn::parse::ParseStream,
+	        _attrs: Option<Vec<syn::Attribute>>,
+	      reactive: bool,
+	) -> syn::Result<Self> {
 		let else0 = input.parse()?;
 		let if0: Option<_> = input.parse()?;
 		let expr = if0.is_some()
@@ -30,34 +32,39 @@ impl<T: Expand> ParseReactive for If<T> {
 	}
 }
 
-pub(crate) fn parse_ifs<T: ParseReactive>(input: ParseStream, reactive: bool) -> syn::Result<Vec<T>> {
-	let mut ifs = vec![T::parse(input, reactive)?];
-	while input.peek(syn::Token![else]) { ifs.push(T::parse(input, reactive)?); }
+pub(crate) fn parse_ifs<T: ParseReactive>(
+	input: syn::parse::ParseStream, reactive: bool
+) -> syn::Result<Vec<T>> {
+	let mut ifs = vec![T::parse(input, None, reactive)?];
+	while input.peek(syn::Token![else]) { ifs.push(T::parse(input, None, reactive)?); }
 	Ok(ifs)
 }
 
-pub(crate) struct Match<T: Expand> {
+pub(crate) struct Match<T> {
 	token: syn::Token![match],
 	 expr: syn::Expr,
 	 arms: Vec<Arm<T>>,
 }
 
 impl<T: Expand> ParseReactive for Match<T> {
-	fn parse(input: ParseStream, reactive: bool) -> syn::Result<Self> {
+	fn parse(input: syn::parse::ParseStream,
+	        _attrs: Option<Vec<syn::Attribute>>,
+	     _reactive: bool,
+	) -> syn::Result<Self> {
 		Ok(Match {
 			token: input.parse()?,
 			 expr: input.call(syn::Expr::parse_without_eager_brace)?,
 			 arms: {
 				let braces; syn::braced!(braces in input);
 				let mut arms = vec![];
-				while !braces.is_empty() { arms.push(Arm::parse(&braces, reactive)?) }
+				while !braces.is_empty() { arms.push(braces.parse()?) }
 				arms
 			},
 		})
 	}
 }
 
-pub(crate) struct Arm<T: Expand> {
+pub(crate) struct Arm<T> {
 	attrs: Vec<syn::Attribute>,
 	  pat: syn::Pat,
 	guard: Option<(syn::Token![if], syn::Expr)>,
@@ -65,8 +72,8 @@ pub(crate) struct Arm<T: Expand> {
 	 body: Vec<Inner<T>>,
 }
 
-impl<T: Expand> ParseReactive for Arm<T> {
-	fn parse(input: ParseStream, reactive: bool) -> syn::Result<Self> {
+impl<T: Expand> syn::parse::Parse for Arm<T> {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
 		Ok(Arm {
 			attrs: input.call(syn::Attribute::parse_outer)?,
 			  pat: input.call(syn::Pat::parse_multi_with_leading_vert)?,
@@ -74,30 +81,30 @@ impl<T: Expand> ParseReactive for Arm<T> {
 				.then(|| Ok::<_, syn::Error>((input.parse()?, input.parse()?)))
 				.transpose()?,
 			arrow: input.parse()?,
-			 body: common::props(input, reactive)?,
+			 body: common::props(input, false)?,
 		})
 	}
 }
 
-pub(crate) enum Inner<T: Expand> {
+pub(crate) enum Inner<T> {
 	If { attrs: Vec<syn::Attribute>, ifs: Vec<If<T>> },
 	Match { attrs: Vec<syn::Attribute>, mat: Match<T> },
 	Prop(T),
 }
 
 impl<T: Expand> ParseReactive for Inner<T> {
-	fn parse(input: ParseStream, reactive: bool) -> syn::Result<Self> {
-		let ahead = input.fork();
-		ahead.call(syn::Attribute::parse_outer)?;
-		
-		if ahead.peek(syn::Token![if]) {
-			let attrs = input.call(syn::Attribute::parse_outer)?;
+	fn parse(input: syn::parse::ParseStream,
+	         attrs: Option<Vec<syn::Attribute>>,
+	      reactive: bool,
+	) -> syn::Result<Self> {
+		if input.peek(syn::Token![if]) {
+			let attrs = attrs.ok_or_else(|| input.error("BUG: missing [if] attribute"))?;
 			Ok(Inner::If { attrs, ifs: parse_ifs(input, reactive)? })
-		} else if ahead.peek(syn::Token![match]) {
-			let attrs = input.call(syn::Attribute::parse_outer)?;
-			Ok(Inner::Match { attrs, mat: Match::parse(input, reactive)? })
+		} else if input.peek(syn::Token![match]) {
+			let attrs = attrs.ok_or_else(|| input.error("BUG: missing [match] attribute"))?;
+			Ok(Inner::Match { attrs, mat: Match::parse(input, None, reactive)? })
 		} else {
-			Ok(Inner::Prop(T::parse(input, reactive)?))
+			Ok(Inner::Prop(T::parse(input, attrs, reactive)?))
 		}
 	}
 }

@@ -22,7 +22,10 @@ pub(crate) fn count() -> String {
 }
 
 pub(crate) trait ParseReactive: Sized {
-	fn parse(input: ParseStream, reactive: bool) -> syn::Result<Self>;
+	fn parse(input: ParseStream,
+	         attrs: Option<Vec<syn::Attribute>>,
+	      reactive: bool,
+	) -> syn::Result<Self>;
 }
 
 pub(crate) enum Object { Constructor(syn::Expr), Type(syn::TypePath) }
@@ -105,11 +108,12 @@ pub(crate) fn chain(input: ParseStream) -> syn::Result<TokenStream> {
 
 pub(crate) fn content(input: ParseStream, reactive: bool) -> syn::Result<Vec<Content>> {
 	let mut props = vec![];
-	while !input.is_empty() { props.push(Content::parse(input, reactive)?) }
+	while !input.is_empty() { props.push(Content::parse(input, None, reactive)?) }
 	Ok(props)
 }
 
 pub(crate) struct Back {
+	pub  token: syn::Lifetime,
 	pub battrs: Vec<syn::Attribute>,
 	pub   mut0: Option<syn::Token![mut]>,
 	pub   back: syn::Ident, // name
@@ -117,8 +121,19 @@ pub(crate) struct Back {
 	pub  props: Vec<Content>,
 }
 
-pub(crate) fn back(input: ParseStream, attrs: bool, reactive: bool) -> syn::Result<Back> {
-	let battrs = if attrs { input.call(syn::Attribute::parse_outer)? } else { vec![] };
+impl Back {
+	pub(crate) fn do_not_use(self, stream: &mut TokenStream) {
+		let error = syn::Error::new_spanned(self.token, "cannot use 'back");
+		stream.extend(error.into_compile_error())
+	}
+}
+
+pub(crate) fn parse_back(
+	   input: ParseStream,
+	   token: syn::Lifetime,
+	  battrs: Vec<syn::Attribute>,
+	reactive: bool,
+) -> syn::Result<Back> {
 	let mut0 = input.parse()?;
 	
 	let back = if input.peek(syn::Ident) { input.parse()? }
@@ -128,25 +143,27 @@ pub(crate) fn back(input: ParseStream, attrs: bool, reactive: bool) -> syn::Resu
 	
 	let braces; syn::braced!(braces in input);
 	let mut props = vec![];
-	while !braces.is_empty() { props.push(Content::parse(&braces, reactive)?) }
+	while !braces.is_empty() { props.push(Content::parse(&braces, None, reactive)?) }
 	
-	Ok(Back { battrs, mut0, back, build, props })
+	Ok(Back { token, battrs, mut0, back, build, props })
 }
 
-pub(crate) fn item_content(input: ParseStream, reactive: bool) -> syn::Result<(Vec<Content>, Option<Back>)> {
+pub(crate) fn object_content(
+	input: ParseStream, reactive: bool, root: bool
+) -> syn::Result<(Vec<Content>, Option<Back>)> {
 	let mut props = vec![];
 	let mut  back = None;
 	let braces; syn::braced!(braces in input);
 	
 	while !braces.is_empty() {
-		let content = Content::parse(&braces, reactive)?;
+		let content = Content::parse(&braces, None, reactive)?;
 		
-		if let Content::Back(token) = content {
+		if let Content::Back(ba) = content {
+			if root { return Err(syn::Error::new_spanned(ba.token, "cannot use 'back")) }
 			if back.is_some() {
-				Err(syn::Error::new_spanned(token, "cannot use 'back more than once"))?
+				return Err(syn::Error::new_spanned(ba.token, "cannot use 'back more than once"))
 			}
-			
-			back = Some(self::back(&braces, true, reactive)?)
+			back = Some(ba)
 		} else { props.push(content); }
 	}
 	
@@ -157,9 +174,13 @@ pub(crate) fn props<T: ParseReactive>(input: ParseStream, reactive: bool) -> syn
 	if input.peek(syn::token::Brace) {
 		let braces; syn::braced!(braces in input);
 		let mut props = vec![];
-		while !braces.is_empty() { props.push(T::parse(&braces, reactive)?) }
+		
+		while !braces.is_empty() {
+			props.push(T::parse(&braces, Some(braces.call(syn::Attribute::parse_outer)?), reactive)?)
+		}
+		
 		Ok(props)
-	} else { Ok(vec![T::parse(input, reactive)?]) }
+	} else { Ok(vec![T::parse(input, None, reactive)?]) }
 }
 
 pub(crate) struct Clone(syn::Ident, Option<syn::Expr>);
