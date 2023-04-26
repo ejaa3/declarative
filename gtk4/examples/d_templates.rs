@@ -81,8 +81,8 @@ declarative::view! {
 	gtk::ApplicationWindow window !{
 		application: app
 		title: "Templates"
-		titlebar => gtk::HeaderBar { }
-		build!
+		build! ..
+		set_titlebar => gtk::HeaderBar 'wrap Some { }
 		
 		gtk::Box !{
 			orientation: gtk::Orientation::Vertical

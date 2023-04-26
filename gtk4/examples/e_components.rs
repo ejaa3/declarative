@@ -70,8 +70,8 @@ declarative::view! { // the main component
 	gtk::ApplicationWindow window !{
 		application: app
 		title: "Components"
-		titlebar => gtk::HeaderBar { }
-		build!
+		build! ..
+		set_titlebar => gtk::HeaderBar 'wrap Some { }
 		
 		gtk::Box !{
 			orientation: gtk::Orientation::Vertical

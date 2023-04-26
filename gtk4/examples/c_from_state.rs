@@ -28,8 +28,8 @@ declarative::view! {
 	gtk::ApplicationWindow window !{
 		application: app
 		title: "Count unchanged"
-		titlebar => gtk::HeaderBar { }
-		build!
+		build! ..
+		set_titlebar => gtk::HeaderBar 'wrap Some { }
 		
 		// now we have to use .get() because of Cell:
 		'bind_only if state.count.get() % 2 == 0 {

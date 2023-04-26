@@ -8,7 +8,7 @@
 
 [![REUSE status](https://api.reuse.software/badge/github.com/ejaa3/declarative)](https://api.reuse.software/info/github.com/ejaa3/declarative)
 
-A procedural macro for creating complex reactive views declaratively and quickly.
+A framework-agnostic procedural macro for creating complex reactive views declaratively and quickly.
 
 To use it, add to your Cargo.toml:
 
@@ -26,8 +26,7 @@ This package does not re-export gtk4 or libadwaita, so you should specify them i
 To learn how to use this macro, it is best to clone this repository, read the source code of the examples in alphabetical order and run them like this:
 
 ~~~ bash
-cargo run -p declarative-gtk4 --features gtk_v4_6 --example <NAME>
-# some examples don't need --features gtk_v4_6, but it's not a big deal
+cargo run -p declarative-gtk4 --example EXAMPLE_NAME
 ~~~
 
 The examples depend on [gtk-rs], so you should familiarize yourself with [gtk-rs] first:  
@@ -64,8 +63,8 @@ declarative::view! {
 	gtk::ApplicationWindow window !{
 		application: app
 		title: "My Application"
-		titlebar => gtk::HeaderBar { }
-		build!
+		build! ..
+		set_titlebar => gtk::HeaderBar 'wrap Some { }
 		
 		gtk::Box !{
 			orientation: gtk::Orientation::Vertical
@@ -129,17 +128,15 @@ use send;
 To execute, run:
 
 ~~~ bash
-cargo run -p declarative-gtk4 --features gtk_v4_6
+cargo run -p declarative-gtk4
 ~~~
 
 ## License
 
 Licensed under either of
 
- * Apache License, Version 2.0
-   ([Apache-2.0.txt](LICENSES/Apache-2.0.txt) or http://www.apache.org/licenses/LICENSE-2.0)
- * MIT license
-   ([MIT.txt](LICENSES/MIT.txt) or http://opensource.org/licenses/MIT)
+* Apache License, Version 2.0 ([Apache-2.0.txt](LICENSES/Apache-2.0.txt) or http://www.apache.org/licenses/LICENSE-2.0)
+* MIT license ([MIT.txt](LICENSES/MIT.txt) or http://opensource.org/licenses/MIT)
 
 at your option.
 
