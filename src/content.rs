@@ -73,7 +73,7 @@ impl ParseReactive for Content {
 			let ahead = input.fork();
 			let is_component = ahead.peek(syn::Token![mut])
 				|| ahead.peek(syn::Token![move])
-				|| ahead.peek(syn::Token![use])
+				|| ahead.peek(syn::Token![ref])
 				|| ahead.parse::<common::Object>().is_ok()
 				&& ahead.peek(syn::Ident)
 				|| ahead.peek(syn::Lifetime)

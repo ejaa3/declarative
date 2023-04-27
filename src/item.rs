@@ -23,10 +23,10 @@ pub(crate) struct Item {
 
 pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Result<Item> {
 	let pass = common::parse_pass(input, false)?;
-	let use0 = input.parse::<syn::Token![use]>().is_ok();
-	let object = (!use0).then(|| input.parse()).transpose()?;
-	let mut0 = if !use0 { input.parse()? } else { None };
-	let name = if use0 { Some(input.parse()?) } else { input.parse()? }
+	let ref0 = input.parse::<syn::Token![ref]>().is_ok();
+	let object = (!ref0).then(|| input.parse()).transpose()?;
+	let mut0 = if !ref0 { input.parse()? } else { None };
+	let name = if ref0 { Some(input.parse()?) } else { input.parse()? }
 		.unwrap_or_else(|| syn::Ident::new(&common::count(), input.span()));
 	
 	let mut dot = None;
