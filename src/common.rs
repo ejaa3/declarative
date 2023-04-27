@@ -36,7 +36,7 @@ impl Parse for Object {
 		
 		if ahead.parse::<syn::Path>().is_ok() && !(
 			ahead.peek(syn::Token![.]) || ahead.peek(syn::token::Paren)
-		 ) {
+		) {
 			Ok(Object::Type(input.parse()?))
 		} else {
 			Ok(Object::Constructor(input.parse()?))
@@ -70,17 +70,15 @@ pub(crate) fn expand_object(
 
 pub(crate) struct Pass(pub TokenStream);
 
-impl Parse for Pass {
-	fn parse(input: ParseStream) -> syn::Result<Self> {
-		if input.peek(syn::Token![mut]) {
-			input.parse::<syn::Token![mut]>()?;
-			Ok(Pass(quote![&mut]))
-		} else if input.peek(syn::Token![move]) {
-			input.parse::<syn::Token![move]>()?;
-			Ok(Pass(quote![]))
-		} else {
-			Ok(Pass(quote![&]))
-		}
+pub(crate) fn parse_pass(input: ParseStream, root: bool) -> syn::Result<Pass> {
+	if let Ok(mut0) = input.parse::<syn::Token![mut]>() {
+		if root { Err(syn::Error::new_spanned(mut0, "cannot use mut"))? }
+		Ok(Pass(quote![&#mut0]))
+	} else if let Ok(mov) = input.parse::<syn::Token![move]>() {
+		if root { Err(syn::Error::new_spanned(mov, "cannot use move"))? }
+		Ok(Pass(quote![]))
+	} else {
+		Ok(Pass(quote![&]))
 	}
 }
 
@@ -89,8 +87,7 @@ pub(crate) fn chain(input: ParseStream) -> syn::Result<TokenStream> {
 	loop {
 		let ident = input.parse::<syn::Ident>()?;
 		
-		let (colons, gens) = if input.peek(syn::Token![::]) {
-			let colons = input.parse::<syn::Token![::]>()?;
+		let (colons, gens) = if let Ok(colons) = input.parse::<syn::Token![::]>() {
 			let gens = input.parse::<syn::AngleBracketedGenericArguments>()?;
 			(Some(colons), Some(gens))
 		} else { (None, None) };
@@ -135,10 +132,7 @@ pub(crate) fn parse_back(
 	reactive: bool,
 ) -> syn::Result<Back> {
 	let mut0 = input.parse()?;
-	
-	let back = if input.peek(syn::Ident) { input.parse()? }
-		else { syn::Ident::new(&count(), input.span()) };
-	
+	let back = input.parse().unwrap_or_else(|_| syn::Ident::new(&count(), input.span()));
 	let build = input.parse()?;
 	
 	let braces; syn::braced!(braces in input);
@@ -188,12 +182,8 @@ pub(crate) struct Clone(syn::Ident, Option<syn::Expr>);
 impl Parse for Clone {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
 		let ident = input.parse()?;
-		
-		let expr = if input.peek(syn::Token![as]) {
-			input.parse::<syn::Token![as]>()?;
-			Some(input.parse()?)
-		} else { None };
-		
+		let expr = input.parse::<syn::Token![as]>()
+			.is_ok().then(|| input.parse()).transpose()?;
 		Ok(Clone(ident, expr))
 	}
 }

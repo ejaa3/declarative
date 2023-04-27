@@ -34,20 +34,11 @@ enum Content { Root(component::Component), Code(TokenStream2) }
 
 impl Parse for Content {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
-		if input.peek(syn::Token![..]) {
-			input.parse::<syn::Token![..]>()?;
+		if input.parse::<syn::Token![..]>().is_ok() {
 			return Ok(Content::Code(input.parse()?))
 		}
-		
 		let attrs = input.call(syn::Attribute::parse_outer)?;
-		
-		let use0 = if let Ok(keyword) = input.parse::<syn::Lifetime>() {
-			if keyword.ident != "use" {
-				Err(syn::Error::new_spanned(keyword, "expected 'use"))?
-			} true
-		} else { false };
-		
-		Ok(Content::Root(component::parse(input, attrs, true, use0, true)?))
+		Ok(Content::Root(component::parse(input, attrs, true, true)?))
 	}
 }
 

@@ -11,10 +11,10 @@ pub(crate) struct Component {
 	 attrs: Vec<syn::Attribute>,
 	  pass: common::Pass,
 	object: Option<common::Object>,
-	  name: syn::Ident,
-	  with: Option<syn::Expr>,
-	 chain: Option<TokenStream>,
 	  mut0: Option<syn::Token![mut]>,
+	  name: syn::Ident,
+	 chain: Option<TokenStream>,
+	  with: Option<syn::Expr>,
 	 build: Option<syn::Token![!]>,
 	 props: Vec<Content>,
 	  back: Option<common::Back>,
@@ -24,17 +24,17 @@ pub(crate) fn parse(
 	   input: syn::parse::ParseStream,
 	   attrs: Vec<syn::Attribute>,
 	reactive: bool,
-	    use0: bool,
 	    root: bool,
 ) -> syn::Result<Component> {
-	let pass = input.parse()?;
+	let pass = common::parse_pass(input, root)?;
+	let use0 = input.parse::<syn::Token![use]>().is_ok();
 	let object = (!use0).then(|| input.parse()).transpose()?;
 	let mut0 = if !use0 { input.parse()? } else { None };
 	let name = if use0 { Some(input.parse()?) } else { input.parse()? }
 		.unwrap_or_else(|| syn::Ident::new(&common::count(), input.span()));
 	
-	let mut with = None;
 	let mut chain = None;
+	let mut with = None;
 	
 	let (build, (props, back)) = 'back: {
 		for _ in 0..3 {
@@ -64,11 +64,11 @@ pub(crate) fn parse(
 		(input.parse()?, common::object_content(input, reactive, root)?)
 	};
 	
-	Ok(Component { attrs, pass, object, name, with, chain, mut0, build, props, back })
+	Ok(Component { attrs, pass, object, mut0, name, chain, with, build, props, back })
 }
 
 pub(crate) fn expand(
-	Component { mut attrs, mut0, object, name, with, chain, pass, build, props, back }: Component,
+	Component { mut attrs, pass, object, mut0, name, chain, with, build, props, back }: Component,
 	   objects: &mut TokenStream,
 	  builders: &mut Vec<TokenStream>,
 	  settings: &mut TokenStream,

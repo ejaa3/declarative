@@ -51,16 +51,12 @@ impl<T: Expand> ParseReactive for Match<T> {
 	        _attrs: Option<Vec<syn::Attribute>>,
 	     _reactive: bool,
 	) -> syn::Result<Self> {
-		Ok(Match {
-			token: input.parse()?,
-			 expr: input.call(syn::Expr::parse_without_eager_brace)?,
-			 arms: {
-				let braces; syn::braced!(braces in input);
-				let mut arms = vec![];
-				while !braces.is_empty() { arms.push(braces.parse()?) }
-				arms
-			},
-		})
+		let token = input.parse()?;
+		let expr = input.call(syn::Expr::parse_without_eager_brace)?;
+		let braces; syn::braced!(braces in input);
+		let mut arms = vec![];
+		while !braces.is_empty() { arms.push(braces.parse()?) }
+		Ok(Match { token, expr, arms })
 	}
 }
 
@@ -77,8 +73,8 @@ impl<T: Expand> syn::parse::Parse for Arm<T> {
 		Ok(Arm {
 			attrs: input.call(syn::Attribute::parse_outer)?,
 			  pat: input.call(syn::Pat::parse_multi_with_leading_vert)?,
-			guard: input.peek(syn::Token![if])
-				.then(|| Ok::<_, syn::Error>((input.parse()?, input.parse()?)))
+			guard: input.parse::<syn::Token![if]>().ok()
+				.map(|if0| Ok::<_, syn::Error>((if0, input.parse()?)))
 				.transpose()?,
 			arrow: input.parse()?,
 			 body: common::props(input, false)?,
@@ -169,9 +165,11 @@ pub(crate) fn expand_inner<T: Expand>(
 			
 			ifs.into_iter().for_each(|If { else0, if0, expr, props }| {
 				let stream = &mut TokenStream::new();
+				
 				props.into_iter().for_each(|inner| expand_inner(
 					inner, objects, builders, settings, bindings, Some(stream), name
 				));
+				
 				block.extend(quote![#else0 #if0 #expr { #stream }]);
 			})
 		} else {
@@ -185,6 +183,7 @@ pub(crate) fn expand_inner<T: Expand>(
 				props.into_iter().for_each(|inner| expand_inner(
 					inner, objects, builders, setup, bindings, None, name
 				));
+				
 				settings.extend(quote![#else0 #if0 #expr { #objects #(#builders;)* #setup #block }]);
 			})
 		}

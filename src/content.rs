@@ -12,17 +12,17 @@ use syn::{punctuated::Punctuated, visit_mut::VisitMut};
 use crate::{conditional, common, property, component, Visit};
 
 pub(crate) enum Binding {
-	If(Vec<conditional::If<Prop<Expr>>>),
-	Match(conditional::Match<Prop<Expr>>),
-	Props(Vec<Prop<Expr>>),
+	If    (Vec<conditional::If<Prop<Expr>>>),
+	Match (conditional::Match<Prop<Expr>>),
+	Props (Vec<Prop<Expr>>),
 }
 
 pub(crate) enum Content {
-	Back(common::Back),
-	None(Prop<Value>),
-	Built(Vec<Content>),
-	Component(component::Component),
-	Inner(Box<conditional::Inner<Content>>),
+	Back      (common::Back),
+	None      (Prop<Value>),
+	Built     (Vec<Content>),
+	Component (component::Component),
+	Inner     (Box<conditional::Inner<Content>>),
 	Bind {
 		attrs: Vec<syn::Attribute>,
 		 cond: Option<syn::Expr>,
@@ -52,19 +52,28 @@ impl ParseReactive for Content {
 		
 		let keyword = if let Ok(keyword) = input.parse::<syn::Lifetime>() {
 			match keyword.ident.to_string().as_str() {
-				"use" => return Ok(Content::Component(component::parse(input, attrs, reactive, true, false)?)),
-				"back" => return Ok(Content::Back(common::parse_back(input, keyword, attrs, reactive)?)),
-				"bind" | "bind_only" | "bind_now" | "binding" => if !reactive {
-					return Err(syn::Error::new_spanned(&keyword, format!("cannot use {keyword} here")))
-				} else { keyword }
-				_ => return Err(syn::Error::new_spanned(&keyword, format!("unknown keyword {keyword}")))
+				"back" => return Ok(Content::Back(
+					common::parse_back(input, keyword, attrs, reactive)?
+				)),
+				"bind" | "bind_only" | "bind_now" | "binding" =>
+					if reactive { keyword } else {
+						Err(syn::Error::new_spanned(
+							&keyword, format!("cannot use {keyword} here")
+						))?
+					}
+				_ => return Err(syn::Error::new_spanned(
+					&keyword, format!("unknown keyword {keyword}")
+				))
 			}
 		} else if input.peek(syn::Token![if]) || input.peek(syn::Token![match]) {
-			return Ok(Content::Inner(conditional::Inner::parse(input, Some(attrs), false)?.into()))
+			return Ok(Content::Inner(
+				conditional::Inner::parse(input, Some(attrs), false)?.into()
+			))
 		} else {
 			let ahead = input.fork();
 			let is_component = ahead.peek(syn::Token![mut])
 				|| ahead.peek(syn::Token![move])
+				|| ahead.peek(syn::Token![use])
 				|| ahead.parse::<common::Object>().is_ok()
 				&& ahead.peek(syn::Ident)
 				|| ahead.peek(syn::Lifetime)
@@ -73,7 +82,7 @@ impl ParseReactive for Content {
 				|| ahead.peek(syn::token::Brace);
 			
 			return Ok(if is_component
-			     { Content::Component(component::parse(input, attrs, reactive, false, false)?) }
+			     { Content::Component(component::parse(input, attrs, reactive, false)?) }
 			else { Content::None(Prop::parse(input, Some(attrs), reactive)?) })
 		};
 		
@@ -113,9 +122,7 @@ impl ParseReactive for Content {
 				let mut0 = input.parse()?;
 				let name = input.parse()?;
 				input.parse::<syn::Token![:]>()?;
-				
 				let clones = common::parse_clones(input)?;
-				
 				Ok(Content::Binding { attrs, mut0, name, clones, closure: input.parse()?})
 			}
 			
@@ -145,9 +152,9 @@ pub(crate) fn expand(
 		Content::Component(component) => component::expand(
 			component, objects, builders, settings, bindings, pattrs, Some(name)
 		),
-		Content::Inner(inner) => {
-			conditional::expand_inner(*inner, objects, builders, settings, bindings, None, name);
-		}
+		Content::Inner(inner) => conditional::expand_inner(
+			*inner, objects, builders, settings, bindings, None, name
+		),
 		Content::Bind { attrs, cond, props } => {
 			let stream: TokenStream = props.into_iter()
 				.filter_map(|prop| expand_expr(
@@ -164,6 +171,7 @@ pub(crate) fn expand(
 		Content::BindOnly(attrs, bind) => match bind {
 			Binding::If(ifs) => {
 				bindings.extend(quote![#(#pattrs)* #(#attrs)*]);
+				
 				ifs.into_iter().for_each(|if0| conditional::expand_if(
 					if0, objects, builders, settings, bindings, name, false
 				))
@@ -186,6 +194,7 @@ pub(crate) fn expand(
 			Binding::If(ifs) => {
 				settings.extend(quote![#(#pattrs)* #(#attrs)*]);
 				bindings.extend(quote![#(#pattrs)* #(#attrs)*]);
+				
 				ifs.into_iter().for_each(|if0| conditional::expand_if(
 					if0, objects, builders, settings, bindings, name, true
 				))
@@ -209,7 +218,11 @@ pub(crate) fn expand(
 			let stream = std::mem::take(bindings);
 			
 			Visit { name: "bindings", stream }.visit_expr_closure_mut(&mut closure);
-			settings.extend(quote![#(#pattrs)* #(#attrs)* let #mut0 #name = { #(let #clones;)* #closure };])
+			
+			settings.extend(quote!{
+				#(#pattrs)* #(#attrs)*
+				let #mut0 #name = { #(let #clones;)* #closure };
+			})
 		}
 	}
 }

@@ -12,7 +12,7 @@ use super::{common, content::{self, Content}, item};
 pub(crate) struct Prop<T> {
 	attrs: Vec<syn::Attribute>,
 	ident: syn::Ident,
-	 gens: Option<syn::AngleBracketedGenericArguments>,
+	 gens: Option<(syn::Token![::], syn::AngleBracketedGenericArguments)>,
 	 args: Punctuated<syn::Expr, syn::Token![,]>,
 	 rest: Option<TokenStream>,
 	value: T,
@@ -26,21 +26,17 @@ impl<T: common::ParseReactive> common::ParseReactive for Prop<T> {
 		let attrs = attrs.unwrap_or_default();
 		let ident = input.parse()?;
 		
-		let gens = if input.peek(syn::Token![::]) {
-			input.parse::<syn::Token![::]>()?;
-			Some(input.parse()?)
-		} else { None };
+		let gens = input.parse::<syn::Token![::]>().ok()
+			.map(|sep| Ok::<_, syn::Error>((sep, input.parse()?))).transpose()?;
 		
 		let mut args = Punctuated::new();
 		let mut rest = None;
 		
 		if input.peek(syn::token::Bracket) {
 			let brackets; syn::bracketed!(brackets in input);
-			loop {
-				if brackets.is_empty() { break; }
-				
-				if brackets.peek(syn::Token![..]) {
-					brackets.parse::<syn::Token![..]>()?;
+			
+			while !brackets.is_empty() {
+				if brackets.parse::<syn::Token![..]>().is_ok() {
 					rest = Some(brackets.parse()?);
 					break;
 				}
@@ -124,11 +120,8 @@ pub(crate) fn expand_value(
 				bindings, pattrs, name, builder.is_some()
 			) else { return };
 			
-			if let Some(index) = builder {
-				builders[index].extend(expr);
-			} else {
-				settings.extend(expr);
-			}
+			let Some(index) = builder else { return settings.extend(expr) };
+			builders[index].extend(expr);
 		}
 	}
 }
@@ -209,7 +202,7 @@ pub(crate) fn expand_expr(
 		return None
 	}
 	
-	let gens = gens.into_iter();
+	let (sep, gens) = gens.unzip();
 	
 	let (assigned, back) = match value {
 		Expr::Call { clones, value, back } =>
@@ -232,12 +225,12 @@ pub(crate) fn expand_expr(
 	};
 	
 	if build {
-		if let Some(back) = back { back.do_not_use(objects) }
-		return Some(quote![.#ident #(::#gens)* (#args #assigned #rest)])
+		if let Some(back) = back { back.do_not_use(objects); return None }
+		return Some(quote![.#ident #sep #gens (#args #assigned #rest)])
 	}
 	
 	let Some(common::Back { mut0, back, build, props, .. }) = back else {
-		return Some(quote![#(#pattrs)* #(#attrs)* #(#name.)* #ident #(::#gens)* (#args #assigned #rest);])
+		return Some(quote![#(#pattrs)* #(#attrs)* #(#name.)* #ident #sep #gens (#args #assigned #rest);])
 	};
 	
 	let (semi, index) = if build.is_some() {
@@ -249,7 +242,7 @@ pub(crate) fn expand_expr(
 	
 	settings.extend(quote::quote! {
 		#(#pattrs)* #(#attrs)*
-		let #mut0 #back = #(#name.)* #ident #(::#gens)* (#args #assigned #rest) #semi
+		let #mut0 #back = #(#name.)* #ident #sep #gens (#args #assigned #rest) #semi
 	});
 	
 	common::extend_attributes(&mut attrs, pattrs);

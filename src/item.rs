@@ -10,30 +10,27 @@ use syn::punctuated::Punctuated;
 use crate::{content::{self, Content}, common};
 
 pub(crate) struct Item {
-	  mut0: Option<syn::Token![mut]>,
-	object: Option<common::Object>,
-	  name: syn::Ident,
-	  wrap: Punctuated<syn::Path, syn::Token![,]>,
-	 chain: Option<TokenStream>,
 	  pass: common::Pass,
+	object: Option<common::Object>,
+	  mut0: Option<syn::Token![mut]>,
+	  name: syn::Ident,
+	 chain: Option<TokenStream>,
+	  wrap: Punctuated<syn::Path, syn::Token![,]>,
 	 build: Option<syn::Token![!]>,
 	 props: Vec<Content>,
 	  back: Option<common::Back>,
 }
 
 pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Result<Item> {
-	let pass = input.parse()?;
-	let error = input.fork();
-	let use0 = input.parse::<syn::Lifetime>()
-		.map(|kw| if kw.ident == "use" { Ok(true) } else { Err(error.error("expected 'use")) })
-		.unwrap_or(Ok(false))?;
-	
+	let pass = common::parse_pass(input, false)?;
+	let use0 = input.parse::<syn::Token![use]>().is_ok();
 	let object = (!use0).then(|| input.parse()).transpose()?;
 	let mut0 = if !use0 { input.parse()? } else { None };
 	let name = if use0 { Some(input.parse()?) } else { input.parse()? }
 		.unwrap_or_else(|| syn::Ident::new(&common::count(), input.span()));
-	let mut wrap = None;
+	
 	let mut chain = None;
+	let mut wrap = None;
 	
 	let (build, (props, back)) = 'back: {
 		for _ in 0..3 {
@@ -59,7 +56,7 @@ pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Resu
 					}
 				} else { Err(input.error("expected a single 'wrap"))? }
 				
-				_ => Err(error.error("expected 'back, 'chain or 'wrap"))?
+				_ => Err(syn::Error::new_spanned(keyword, "expected 'back, 'chain or 'wrap"))?
 			}
 		}
 		
@@ -68,11 +65,11 @@ pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Resu
 	
 	let wrap = wrap.unwrap_or_default();
 	
-	Ok(Item { mut0, object, name, wrap, chain, pass, build, props, back })
+	Ok(Item { pass, object, mut0, name, chain, wrap, build, props, back })
 }
 
 pub(crate) fn expand(
-	Item { mut0, object, name, wrap, chain, pass, build, props, back }: Item,
+	Item { pass, object, mut0, name, chain, wrap, build, props, back }: Item,
 	  objects: &mut TokenStream,
 	 builders: &mut Vec<TokenStream>,
 	 settings: &mut TokenStream,
@@ -80,7 +77,7 @@ pub(crate) fn expand(
 	     root: &[&syn::Ident],
 	mut attrs: Vec<syn::Attribute>,
 	    ident: syn::Ident,
-	     gens: Option<syn::AngleBracketedGenericArguments>,
+	     gens: Option<(syn::Token![::], syn::AngleBracketedGenericArguments)>,
 	     args: Punctuated<syn::Expr, syn::Token![,]>,
 	     rest: Option<TokenStream>,
 	  builder: Option<usize>,
@@ -94,18 +91,18 @@ pub(crate) fn expand(
 		keyword, objects, builders, settings, bindings, &attrs, &[&name], new_builder
 	));
 	
-	let gens = gens.into_iter();
+	let (sep, gens) = gens.unzip();
 	let common::Pass(pass) = pass;
 	
 	let mut set = quote![#pass #name];
 	wrap.into_iter().for_each(|wrap| { set = quote![#wrap(#set)] });
 	
 	if field { // TODO builder?
-		if let Some(back) = back { back.do_not_use(objects) }
+		if let Some(back) = back { return back.do_not_use(objects) }
 		settings.extend(quote![#(#attrs)* #(#root.)* #ident = #set #chain;])
 	} else if let Some(index) = builder {
-		if let Some(back) = back { back.do_not_use(objects) }
-		builders[index].extend(quote![.#ident #(::#gens)* (#args #set #chain, #rest)])
+		if let Some(back) = back { return back.do_not_use(objects) }
+		builders[index].extend(quote![.#ident #sep #gens (#args #set #chain, #rest)])
 	} else if let Some(common::Back { battrs, mut0, back, build, props, .. }) = back {
 		attrs.extend(battrs);
 		
@@ -117,7 +114,7 @@ pub(crate) fn expand(
 		};
 		
 		settings.extend(quote! {
-			#(#attrs)* let #mut0 #back = #(#root.)* #ident #(::#gens)* (#args #set #chain, #rest) #semi
+			#(#attrs)* let #mut0 #back = #(#root.)* #ident #sep #gens (#args #set #chain, #rest) #semi
 		});
 		
 		props.into_iter().for_each(|keyword| content::expand(
@@ -129,6 +126,6 @@ pub(crate) fn expand(
 			settings.extend(quote![#builder;])
 		}
 	} else {
-		settings.extend(quote![#(#attrs)* #(#root.)* #ident #(::#gens)* (#args #set #chain, #rest);])
+		settings.extend(quote![#(#attrs)* #(#root.)* #ident #sep #gens (#args #set #chain, #rest);])
 	}
 }
