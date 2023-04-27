@@ -91,6 +91,7 @@ composable!(gtk::Grid, attach(column: i32, row: i32, width: i32, height: i32));
 composable!(gtk::HeaderBar, set_title_widget(), Some); // NOTE also has {pack_start,pack_end}
 composable!(gtk::ListBox, append());
 composable!(gtk::ListBoxRow, set_child(), Some);
+composable!(gtk::ListItem, set_child(), Some);
 composable!(gtk::Overlay, set_child(), Some);
 composable!(gtk::PasswordEntry: gio::MenuModel, set_extra_menu(), Some);
 composable!(gtk::Popover, set_child(), Some); // NOTE also has set_default_widget
