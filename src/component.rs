@@ -13,7 +13,7 @@ pub(crate) struct Component {
 	object: Option<common::Object>,
 	  mut0: Option<syn::Token![mut]>,
 	  name: syn::Ident,
-	 chain: Option<TokenStream>,
+	   dot: Option<TokenStream>,
 	  with: Option<syn::Expr>,
 	 build: Option<syn::Token![!]>,
 	 props: Vec<Content>,
@@ -33,7 +33,7 @@ pub(crate) fn parse(
 	let name = if use0 { Some(input.parse()?) } else { input.parse()? }
 		.unwrap_or_else(|| syn::Ident::new(&common::count(), input.span()));
 	
-	let mut chain = None;
+	let mut dot = None;
 	let mut with = None;
 	
 	let (build, (props, back)) = 'back: {
@@ -49,26 +49,26 @@ pub(crate) fn parse(
 					common::parse_back(input, keyword, vec![], reactive)?
 				))),
 				
-				"chain" => if chain.is_some() {
-					Err(syn::Error::new_spanned(keyword, "expected a single 'chain"))?
-				} else { chain = Some(common::chain(input)?) }
+				"dot" => if dot.is_some() {
+					Err(syn::Error::new_spanned(keyword, "expected a single 'dot"))?
+				} else { dot = Some(common::dot(input)?) }
 				
 				"with" => if with.is_some() {
 					Err(syn::Error::new_spanned(keyword, "expected a single 'with"))?
 				} else { with = Some(input.parse()?) }
 				
-				_ => Err(syn::Error::new_spanned(keyword, "expected 'back, 'chain or 'with"))?
+				_ => Err(syn::Error::new_spanned(keyword, "expected 'back, 'dot or 'with"))?
 			}
 		}
 		
 		(input.parse()?, common::object_content(input, reactive, root)?)
 	};
 	
-	Ok(Component { attrs, pass, object, mut0, name, chain, with, build, props, back })
+	Ok(Component { attrs, pass, object, mut0, name, dot, with, build, props, back })
 }
 
 pub(crate) fn expand(
-	Component { mut attrs, pass, object, mut0, name, chain, with, build, props, back }: Component,
+	Component { mut attrs, pass, object, mut0, name, dot, with, build, props, back }: Component,
 	   objects: &mut TokenStream,
 	  builders: &mut Vec<TokenStream>,
 	  settings: &mut TokenStream,
@@ -103,7 +103,7 @@ pub(crate) fn expand(
 		settings.extend(quote::quote! {
 			#(#attrs)*
 			let #mut0 #back = #(#composable.)* as_composable_add_component(
-				#pass #name #chain, #with
+				#pass #name #dot, #with
 			) #semi
 		});
 		
@@ -118,7 +118,7 @@ pub(crate) fn expand(
 	} else {
 		settings.extend(quote::quote! {
 			#(#attrs)*
-			#(#composable.)* as_composable_add_component(#pass #name #chain, #with);
+			#(#composable.)* as_composable_add_component(#pass #name #dot, #with);
 		});
 	}
 }

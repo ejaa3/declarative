@@ -14,7 +14,7 @@ pub(crate) struct Item {
 	object: Option<common::Object>,
 	  mut0: Option<syn::Token![mut]>,
 	  name: syn::Ident,
-	 chain: Option<TokenStream>,
+	   dot: Option<TokenStream>,
 	  wrap: Punctuated<syn::Path, syn::Token![,]>,
 	 build: Option<syn::Token![!]>,
 	 props: Vec<Content>,
@@ -29,7 +29,7 @@ pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Resu
 	let name = if use0 { Some(input.parse()?) } else { input.parse()? }
 		.unwrap_or_else(|| syn::Ident::new(&common::count(), input.span()));
 	
-	let mut chain = None;
+	let mut dot = None;
 	let mut wrap = None;
 	
 	let (build, (props, back)) = 'back: {
@@ -41,9 +41,9 @@ pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Resu
 					common::parse_back(input, keyword, vec![], reactive)?
 				))),
 				
-				"chain" => if chain.is_some() {
-					Err(syn::Error::new_spanned(keyword, "expected a single 'chain"))?
-				} else { chain = Some(common::chain(input)?) }
+				"dot" => if dot.is_some() {
+					Err(syn::Error::new_spanned(keyword, "expected a single 'dot"))?
+				} else { dot = Some(common::dot(input)?) }
 				
 				"wrap" => if wrap.is_none() {
 					wrap = if input.peek(syn::token::Paren) {
@@ -56,7 +56,7 @@ pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Resu
 					}
 				} else { Err(input.error("expected a single 'wrap"))? }
 				
-				_ => Err(syn::Error::new_spanned(keyword, "expected 'back, 'chain or 'wrap"))?
+				_ => Err(syn::Error::new_spanned(keyword, "expected 'back, 'dot or 'wrap"))?
 			}
 		}
 		
@@ -65,11 +65,11 @@ pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Resu
 	
 	let wrap = wrap.unwrap_or_default();
 	
-	Ok(Item { pass, object, mut0, name, chain, wrap, build, props, back })
+	Ok(Item { pass, object, mut0, name, dot, wrap, build, props, back })
 }
 
 pub(crate) fn expand(
-	Item { pass, object, mut0, name, chain, wrap, build, props, back }: Item,
+	Item { pass, object, mut0, name, dot, wrap, build, props, back }: Item,
 	  objects: &mut TokenStream,
 	 builders: &mut Vec<TokenStream>,
 	 settings: &mut TokenStream,
@@ -99,10 +99,10 @@ pub(crate) fn expand(
 	
 	if field { // TODO builder?
 		if let Some(back) = back { return back.do_not_use(objects) }
-		settings.extend(quote![#(#attrs)* #(#root.)* #ident = #set #chain;])
+		settings.extend(quote![#(#attrs)* #(#root.)* #ident = #set #dot;])
 	} else if let Some(index) = builder {
 		if let Some(back) = back { return back.do_not_use(objects) }
-		builders[index].extend(quote![.#ident #sep #gens (#args #set #chain, #rest)])
+		builders[index].extend(quote![.#ident #sep #gens (#args #set #dot, #rest)])
 	} else if let Some(common::Back { battrs, mut0, back, build, props, .. }) = back {
 		attrs.extend(battrs);
 		
@@ -114,7 +114,7 @@ pub(crate) fn expand(
 		};
 		
 		settings.extend(quote! {
-			#(#attrs)* let #mut0 #back = #(#root.)* #ident #sep #gens (#args #set #chain, #rest) #semi
+			#(#attrs)* let #mut0 #back = #(#root.)* #ident #sep #gens (#args #set #dot, #rest) #semi
 		});
 		
 		props.into_iter().for_each(|keyword| content::expand(
@@ -126,6 +126,6 @@ pub(crate) fn expand(
 			settings.extend(quote![#builder;])
 		}
 	} else {
-		settings.extend(quote![#(#attrs)* #(#root.)* #ident #sep #gens (#args #set #chain, #rest);])
+		settings.extend(quote![#(#attrs)* #(#root.)* #ident #sep #gens (#args #set #dot, #rest);])
 	}
 }

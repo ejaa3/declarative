@@ -82,7 +82,7 @@ pub(crate) fn parse_pass(input: ParseStream, root: bool) -> syn::Result<Pass> {
 	}
 }
 
-pub(crate) fn chain(input: ParseStream) -> syn::Result<TokenStream> {
+pub(crate) fn dot(input: ParseStream) -> syn::Result<TokenStream> {
 	let mut stream = TokenStream::new();
 	loop {
 		let ident = input.parse::<syn::Ident>()?;
