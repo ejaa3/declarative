@@ -149,7 +149,7 @@ impl<T: IsA<gtk::Widget>> Composable<&T, (), ()> for gtk::Paned {
 mod deprecated {
 	use gtk::prelude::{ComboBoxExt, DialogExt, TreeViewExt};
 	use super::{ButtonExt, Composable, IsA};
-
+	
 	composable!(gtk::Assistant, append_page() -> i32);
 	composable!(gtk::ComboBox, set_child(), Some);
 	composable!(gtk::ComboBoxText, set_child(), Some);
@@ -157,7 +157,7 @@ mod deprecated {
 	composable!(gtk::InfoBar, add_child());
 	composable!(gtk::LockButton, set_child(), Some);
 	composable!(gtk::TreeView => &gtk::TreeViewColumn, append_column() -> i32);
-
+	
 	impl<T: IsA<gtk::Widget>> Composable<&T, gtk::ResponseType, ()> for gtk::Dialog {
 		fn as_composable_add_component(&self, component: &T, response_type: gtk::ResponseType) {
 			self.add_action_widget(component, response_type)
@@ -174,8 +174,8 @@ mod libadwaita {
 	
 	#[cfg(any(feature = "adw_v1_2", feature = "dox"))]
 	use adw::traits::MessageDialogExt;
-
-use super::*;
+	
+	use super::*;
 	// adw::{EntryRow,PasswordEntryRow} has add_{prefix,suffix}
 	// adw::Flap has set_{content,flap,separator}
 	
