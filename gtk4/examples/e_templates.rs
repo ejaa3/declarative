@@ -90,8 +90,8 @@ declarative::view! {
 			build!
 			
 			// BoxTemplate is not a widget but its root field is;
-			// use 'chain to specify that you are adding root to the gtk::Box:
-			BoxTemplate::new(&sender_1) 'chain root {
+			// use 'dot to specify that you are adding root to the gtk::Box:
+			BoxTemplate::new(&sender_1) 'dot root {
 				// you can edit a field with: field -> { /* edit */ }
 				label -> {
 					set_label: "This is the first view:"
@@ -108,11 +108,10 @@ declarative::view! {
 				'binding update_view_1: move |state_1: &State| { bindings!(); }
 				// at this point the entire template has moved to the binding closure
 			}
-			// if the binding closure was created here, it would work the same
 			
 			gtk::Separator { }
 			
-			BoxTemplate::new(&sender_2) 'chain root { // almost the same code as above
+			BoxTemplate::new(&sender_2) 'dot root { // almost the same code as above
 				label -> {
 					set_label: "This is the second view:"
 					
@@ -124,9 +123,6 @@ declarative::view! {
 					connect_clicked: move |_| send!(Msg::Decrease => sender_2)
 				}
 				
-				// you can use 'binding as many times as you want, but each one consumes
-				// everything that was declared with 'bind and the like before, regardless
-				// of scope, which prevents one closure from updating the same as another:
 				'binding update_view_2: move |state_2: &State| { bindings!(); }
 			}
 		}
@@ -167,7 +163,7 @@ fn main() -> glib::ExitCode {
 macro_rules! send {
 	($expr:expr => $sender:ident) => {
 		$sender.send($expr).unwrap_or_else(
-			move |error| glib::g_critical!("d_templates", "{error}")
+			move |error| glib::g_critical!("e_templates", "{error}")
 		)
 	};
 }

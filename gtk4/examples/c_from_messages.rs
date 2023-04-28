@@ -23,7 +23,7 @@ fn update_state(state: &mut State, msg: Msg) {
 macro_rules! send { // a macro to log send errors
 	($expr:expr => $sender:ident) => {
 		$sender.send($expr).unwrap_or_else(
-			move |error| glib::g_critical!("b_reactivity", "{error}")
+			move |error| glib::g_critical!("c_from_messages", "{error}")
 		)
 	};
 }
@@ -31,18 +31,14 @@ macro_rules! send { // a macro to log send errors
 declarative::view! {
 	gtk::ApplicationWindow::new(app) window {
 		set_title: Some("Count unchanged")
-		// if it is necessary to wrap the assigned object,
-		// such as Some(object) in this case, use 'wrap:
 		set_titlebar => gtk::HeaderBar 'wrap Some { }
 		
-		// use 'bind_only to react to changes (do not assign at startup):
-		'bind_only if state.count % 2 == 0 {
-			set_title: Some("The value is even")
-		} else { // in fact several property assignments can be made here
-			set_title: Some("The value is odd")
+		'bind_only match state.count % 2 == 0 {
+			true  => set_title: Some("The value is even")
+			false => set_title: Some("The value is odd")
 		}
 		
-		// you can start the builder mode with the exclamation mark before the brace:
+		// you can start the “builder mode” with the exclamation mark before the brace:
 		// if only a type is specified, the function Type::builder() is assumed:
 		gtk::Grid !{
 			column_spacing: 6
@@ -50,21 +46,19 @@ declarative::view! {
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
-			margin_end: 6
+			// this is an alternate syntax (arguments in square brackets separated by commas):
+			margin_end[6]! // works by coincidence, but not unexpected
 			
-			// methods without arguments are called with an exclamation mark:
+			// methods without parameters can be called with just the exclamation mark:
 			build! // build is a GTK method to finish a builder
 			
 			.. // the double dot ends the builder mode
 			
-			// “property or object assignments” only assign the first argument of a method;
-			// if the method requires multiple arguments, you can pass the rest in square brackets:
-			//
-			// since the assignee can be in any position, you must specify it with a double dot;
-			// if it must go at the end, don't do it; i.e. ["initial arguments", .. "final arguments"]
+			// if you need to assign an object with a multi-parameter method,
+			// you must specify the position of the object parameter with a double dot,
+			// i.e. ["initial arguments", .. "final arguments"]:
 			attach[.. 0, 0, 2, 1] => gtk::Label my_label {
 				set_hexpand: true
-				// use 'bind to react to changes (assign at startup):
 				'bind set_label: &format!("The count is: {}", state.count)
 			}
 			
@@ -79,22 +73,23 @@ declarative::view! {
 			}
 		}
 		
-		// use 'binding to create a closure to update the view appropriately:
+		// the following binding closure requires `window` because of the 'bind_only above:
 		'binding update_view: 'clone window move |state: &State| { bindings!(); }
-		// we clone the window to move the clone to the closure so that the window can be returned
-		// the closure requires the window due to the 'bind_only above
+		// we clone `window` to move the clone to the closure and thus be able to return `window`
 	} ..
 	
 	fn window(app: &gtk::Application) -> gtk::ApplicationWindow {
-		let mut state = State { count: 0 };
+		let mut state = State { count: 0 }; // we create the state
+		
+		// https://docs.gtk.org/glib/struct.MainContext.html
 		let (sender, receiver) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
 		
 		expand_view_here!();
 		
-		receiver.attach(None, move |msg| {
-			update_state(&mut state, msg);
-			update_view(&state);
-			glib::Continue(true)
+		receiver.attach(None, move |msg| { // the state lives in this closure
+			update_state(&mut state, msg); // we update the state
+			update_view(&state); // and now the view
+			glib::Continue(true) // this is for glib to keep this closure alive
 		});
 		
 		window

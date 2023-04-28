@@ -25,11 +25,9 @@ impl State {
 }
 
 declarative::view! {
-	gtk::ApplicationWindow window !{
+	gtk::ApplicationWindow window !{ // builder mode
 		application: app
 		title: "Count unchanged"
-		build! ..
-		set_titlebar => gtk::HeaderBar 'wrap Some { }
 		
 		// now we have to use .get() because of Cell:
 		'bind_only if state.count.get() % 2 == 0 {
@@ -38,13 +36,17 @@ declarative::view! {
 			set_title: Some("The value is odd")
 		}
 		
-		gtk::Grid !{ // builder mode
+		build! ..
+		set_titlebar => gtk::HeaderBar 'wrap Some { }
+		
+		gtk::Grid !{ // builder mode again
 			column_spacing: 6
 			row_spacing: 6
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
 			margin_end: 6
+			build! // builder mode continues because there is no double dot
 			
 			// builder mode does not affect “component assignments”;
 			// if it were to affect it, it would be a breaking change:
@@ -53,8 +55,13 @@ declarative::view! {
 				'bind set_label: &format!("The count is: {}", state.count.get())
 			}
 			
-			build! // breaking change would only affect builders that require a final call like build!
-			// however, if called without first assigning components, the code would be immune to breaking change
+			// the breaking change would only affect “component assignments” in builder mode, but if
+			// I were to implement that change, I would make it an optional feature and so it would
+			// not be a breaking change (the real intention is to keep the macro framework-agnostic),
+			// but if you enable it, you will probably have to reorder your code as if it were
+			//
+			// gtk-rs users should not worry about this because gtk4 has private builders
+			// (they cannot be composable), and therefore should never enable this feature
 			
 			gtk::Button::with_label("Increase") 'with (0, 1, 1, 1) {
 				// now instead of sending messages we have to do:
@@ -76,13 +83,14 @@ declarative::view! {
 	} ..
 	
 	fn window(app: &gtk::Application) -> gtk::ApplicationWindow {
-		let state: Rc<_> = State {
+		let state: Rc<_> = State { // we create shareable the state
 			  count: 0.into(),
 			binding: OnceCell::new(),
 		}.into();
 		
-		expand_view_here!();
+		expand_view_here!(); // the state is shared here
 		
+		// we give the binding closure to the state:
 		state.binding.set(Box::new(update_view)).unwrap_or(());
 		window
 	}

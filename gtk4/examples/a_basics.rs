@@ -39,6 +39,7 @@ declarative::view! { // outer syntax
 declarative::view! { // assignments
 	String::new() mut string { // this is a “composable object”
 		push_str: "Now I " // this is a “property assignment”
+		// although push_str() is not a setter, but let's assume
 		
 		push_str => String mut { // this is an “object assignment”
 			push_str: "will say: "

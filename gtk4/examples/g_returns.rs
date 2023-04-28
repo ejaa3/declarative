@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ *
+ * SPDX-License-Identifier: (Apache-2.0 or MIT)
+ */
+
 use declarative_gtk4::Composable;
 use gtk::{glib, prelude::*};
 
@@ -90,7 +96,7 @@ fn main() -> glib::ExitCode {
 macro_rules! send {
 	($expr:expr => $sender:ident) => {
 		$sender.send($expr).unwrap_or_else(
-			move |error| glib::g_critical!("f_returns", "{error}")
+			move |error| glib::g_critical!("g_returns", "{error}")
 		)
 	};
 }

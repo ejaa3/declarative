@@ -82,8 +82,8 @@ declarative::view! { // the main component
 			margin_end: 6
 			build!
 			
-			// use 'use to use a variable defined before the view:
-			'use first_component { }
+			// use `ref` to “refer” to a variable defined before the view:
+			ref first_component { }
 			
 			// or you can call the function here:
 			component("Second", &sender) { }
@@ -122,7 +122,7 @@ fn main() {
 macro_rules! send {
 	($expr:expr => $sender:ident) => {
 		$sender.send($expr).unwrap_or_else(
-			move |error| glib::g_critical!("e_components", "{error}")
+			move |error| glib::g_critical!("f_components", "{error}")
 		)
 	};
 }

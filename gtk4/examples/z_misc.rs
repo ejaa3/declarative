@@ -11,7 +11,7 @@
 
 use std::rc::Rc;
 
-declarative::view! { // conditionals:
+declarative::view! { // conditional initialization (does not support reactivity):
 	gtk::Box {
 		if "this".is_empty() {
 			set_orientation: gtk::Orientation::Vertical
@@ -29,11 +29,6 @@ declarative::view! { // conditionals:
 				gtk::Label { set_label: "World!" }
 			}
 		}
-		
-		// 'bind, 'bind_only and 'bind_now allow conditionals,
-		// but do not allow assigning objects or components
-		//
-		// 'bind only allows if without else and without inner ifs
 	} ..
 }
 
@@ -84,8 +79,8 @@ declarative::view! {
 			inner = None
 		}
 		
-		// 'chain accepts methods().and_fields.2
-		inner -> move Type 'wrap Box::from 'chain into() { }
+		// 'dot accepts methods().fields.tuples.2
+		inner -> move Type 'wrap Box::from 'dot into() { }
 		
 		// you can clone without .clone()
 		// String is clonable like Rc, so be explicit:
