@@ -18,7 +18,7 @@ fn main() {
 }
 
 declarative::view! { // outer syntax
-	// writing only the type constructs it with Default::default()
+	// writing only the type constructs it with Type::default()
 	String { } // no need to name
 	
 	// you can add more objects here
@@ -59,7 +59,7 @@ declarative::view! { // assignments
 }
 
 // for “component assignment” to work, the “composable object”
-// must have a method called “as_composable_add_component”
+// must have a method called “as_composable_add_component”:
 impl ComposableString for String {
 	fn as_composable_add_component(&mut self, string: String, with: &str) {
 		self.push_str(with);

@@ -64,11 +64,11 @@ declarative::view! {
 		// to assign fields use =
 		inner = None
 		
-		method!
-		// closure! // does not work
+		method;
+		// closure; // does not work
 		method_with_arg: None
 		// closure_with_arg: None // does not work
-		method_with_generic::<i32>!
+		method_with_generic::<i32>;
 		method_with_generic_and_arg::<i32>: 32
 		
 		// to assign objects to fields use -> ObjectType:

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use declarative_gtk4::Composable;
+use declarative_gtk4::{Composable, builder_mode};
 use gtk::{glib, prelude::*};
 
 #[derive(Debug)]
@@ -23,14 +23,15 @@ fn update_state(state: &mut State, msg: Msg) {
 macro_rules! send { // a macro to log send errors
 	($expr:expr => $sender:ident) => {
 		$sender.send($expr).unwrap_or_else(
-			move |error| glib::g_critical!("c_from_messages", "{error}")
+			move |error| glib::g_critical!("d_from_messages", "{error}")
 		)
 	};
 }
 
 declarative::view! {
-	gtk::ApplicationWindow::new(app) window {
-		set_title: Some("Count unchanged")
+	gtk::ApplicationWindow window !{
+		application: app
+		title: "Count unchanged" #
 		set_titlebar => gtk::HeaderBar 'wrap Some { }
 		
 		'bind_only match state.count % 2 == 0 {
@@ -38,26 +39,20 @@ declarative::view! {
 			false => set_title: Some("The value is odd")
 		}
 		
-		// you can start the “builder mode” with the exclamation mark before the brace:
-		// if only a type is specified, the function Type::builder() is assumed:
 		gtk::Grid !{
 			column_spacing: 6
 			row_spacing: 6
 			margin_top: 6
 			margin_bottom: 6
-			margin_start: 6
-			// this is an alternate syntax (arguments in square brackets separated by commas):
-			margin_end[6]! // works by coincidence, but not unexpected
 			
-			// methods without parameters can be called with just the exclamation mark:
-			build! // build is a GTK method to finish a builder
+			// this is an alternate syntax:
+			margin_start[6] // arguments in square brackets separated by commas
 			
-			.. // the double dot ends the builder mode
+			margin_end: 6 #
 			
 			// if you need to assign an object with a multi-parameter method,
-			// you must specify the position of the object parameter with a double dot,
-			// i.e. ["initial arguments", .. "final arguments"]:
-			attach[.. 0, 0, 2, 1] => gtk::Label my_label {
+			// you must specify the position of the object parameter with @ if not at the end:
+			attach[@, 0, 0, 2, 1] => gtk::Label my_label {
 				set_hexpand: true
 				'bind set_label: &format!("The count is: {}", state.count)
 			}

@@ -4,14 +4,13 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use declarative_gtk4::Composable;
+use declarative_gtk4::{Composable, builder_mode};
 use gtk::{glib, prelude::*};
 
 declarative::view! {
 	gtk::ApplicationWindow window !{
 		application: app
-		default_height: 300
-		build! ..
+		default_height: 300 #
 		set_titlebar => gtk::HeaderBar 'wrap Some { }
 		
 		gtk::Box {
@@ -19,15 +18,15 @@ declarative::view! {
 			
 			gtk::Stack stack {
 				// some methods return something (in this case a BindingBuilder):
-				bind_property[.. &window, "title"]: "visible-child-name"
+				bind_property["visible-child-name", &window, "title"]
 					// you can edit the return with 'back, even in builder mode:
-					'back !{ sync_create! build! }
+					'back !{ sync_create; }
 				
 				connect_visible_child_notify: move |_| send!(() => sender)
 				
 				// this method returns a gtk::StackPage
-				add_titled[.. None, "First"] => gtk::Label {
-					set_label: "Expected" // no semicolon
+				add_titled[@, None, "First"] => gtk::Label !{
+					label: "Expected" // no semicolon
 					
 					// in this case you edit the return with 'back inside the scope,
 					// and also give it a variable name and make it mutable as well:
@@ -35,10 +34,11 @@ declarative::view! {
 					'back mut returned_page { set_name: "first" }
 				}
 				
-				add_child => gtk::Label {
-					set_label: "From an object assignment";
+				add_child => gtk::Label !{
+					label: "From an object assignment";
 					// the semicolon above is necessary because we do not want to
-					// edit what set_label() returns, but what add_child() returns
+					// edit what label() returns, but what add_child() returns although
+					// 'back is not allowed for “property assignments” in builder mode
 					//
 					// a semicolon was not used before because an #[attribute] followed
 					'back { set_name: "second"; set_title: "Second" }
@@ -50,21 +50,22 @@ declarative::view! {
 					Some("From an object assignment without a body")
 				) 'back { set_name: "third"; set_title: "Third" }
 				
-				gtk::Label {
-					set_label: "From a component assignment";
-					'back { set_name: "fourth"; set_title: "Fourth" }
+				gtk::Label !{
+					label: "From a component assignment"; // do not use # yet
+					'back { set_name: "fourth"; set_title: "Fourth" } # // here you can
+					// for ease, 'back is not allowed after exiting builder mode with #
 				}
 				
 				gtk::Label::new(
 					Some("From a component assignment without a body")
 				) 'back { set_name: "fifth"; set_title: "Fifth" }
 				
-				gtk::Label {
+				gtk::Label !{
 					'back { // can be in any position within the scope
 						set_name: "sixth"
 						'bind set_title: &format!("Changes: {changes}")
 					}
-					set_label: "'back supports reactivity!"
+					label: "'back supports reactivity!"
 				}
 			}
 			
@@ -96,7 +97,7 @@ fn main() -> glib::ExitCode {
 macro_rules! send {
 	($expr:expr => $sender:ident) => {
 		$sender.send($expr).unwrap_or_else(
-			move |error| glib::g_critical!("g_returns", "{error}")
+			move |error| glib::g_critical!("h_returns", "{error}")
 		)
 	};
 }

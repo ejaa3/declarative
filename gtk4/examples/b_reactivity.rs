@@ -8,7 +8,7 @@ use declarative_gtk4::Composable;
 use gtk::{glib, prelude::*};
 use std::cell::Cell;
 
-declarative::view! { // first look at the window() function below
+declarative::view! { // first look at the `window()` function below
 	gtk::ApplicationWindow::new(app) window { // and then come back here
 		set_title: Some("Reactivity")
 		
@@ -18,7 +18,7 @@ declarative::view! { // first look at the window() function below
 			
 			gtk::Label {
 				// to make a “property assignment” react to changes, use 'bind:
-				'bind set_label: &format!("['bind] Count: {count}") // but `bind also initializes
+				'bind set_label: &format!("['bind] Count: {count}") // but 'bind also initializes
 				// since we referred to the count with `count` instead of
 				// `main_count.get()`, we needed the `count` variable before the view
 			}
@@ -26,7 +26,7 @@ declarative::view! { // first look at the window() function below
 				'bind { // multiple “property assignments” within braces are also valid
 					set_label: &format!("['bind] Count with tooltip: {count}")
 					set_tooltip_text: Some(&format!("['bind] Count: {count}"))
-				} // although you could use 'bind' on each instead
+				} // although you could use 'bind on each instead
 			}
 			gtk::Label {
 				// 'bind can update conditionally, but always initializes unconditionally:
@@ -39,7 +39,7 @@ declarative::view! { // first look at the window() function below
 			// use 'binding to create a binding closure to update the view appropriately:
 			'binding update_first_labels: move |count: u8| { bindings!(); }
 			// you can see that it has one parameter although there could be several, but their names
-			// must match what is supposed to change in reactive assignments (with 'bind and the like)
+			// must match what is supposed to change in “reactive assignments” (with 'bind and the like)
 			//
 			// you can also see the statement `bindings!();` which consumes everything
 			// declared with 'bind and the like before this point, regardless of scope,
@@ -51,15 +51,16 @@ declarative::view! { // first look at the window() function below
 				
 				// unlike 'bind, 'bind_now initializes conditionally:
 				'bind_now if count % 2 == 0 {
+					// more “property assignments” and inner conditionals are allowed
 					set_label: &format!("['bind_now] Even count (really): {count}")
-				} // and allows `else if` and `else`
+				} // and `else if` and `else` are allowed
 			}
 			gtk::Label {
-				'bind_now match count % 2 == 0 { // and allows `match`
+				'bind_now match count % 2 == 0 { // and `match` too
 					true  => set_label: "['bind_now] The count is even" // commas are not allowed
 					false => set_label: "['bind_now] The count is odd"; // (semicolons are)
 					#[allow(unreachable_patterns)]
-					_ => { /* between braces is valid various property assignments and inner conditionals */ }
+					_ => { /* between braces is valid various “property assignments” and inner conditionals */ }
 				}
 			}
 			gtk::Label {
@@ -78,7 +79,7 @@ declarative::view! { // first look at the window() function below
 			
 			// unlike the previous binding closure, this receives a Cell<u8> instead of u8:
 			'binding update_latest_labels: move |count: Cell<u8>| {
-				// however, the reactive assignments above still use `count` instead of `count.get()`
+				// however, the “reactive assignments” above still use `count` instead of `count.get()`
 				let count = count.get(); // so we get the count here
 				bindings!(); // and now we can consume the bindings without problems
 			}

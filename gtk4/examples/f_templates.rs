@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use declarative_gtk4::Composable;
+use declarative_gtk4::{Composable, builder_mode};
 use gtk::{glib, prelude::*};
 
 // the second (not the first) thing to do is this structure:
@@ -43,7 +43,6 @@ declarative::view! { // now yes, the first thing to do is a view
 		margin_bottom: 6
 		margin_start: 6
 		margin_end: 6
-		build! ..
 		
 		gtk::Label label { } // I want to publish this widget
 		
@@ -80,14 +79,12 @@ fn update_state(state: &mut State, msg: Msg) {
 declarative::view! {
 	gtk::ApplicationWindow window !{
 		application: app
-		title: "Templates"
-		build! ..
+		title: "Templates" #
 		set_titlebar => gtk::HeaderBar 'wrap Some { }
 		
 		gtk::Box !{
 			orientation: gtk::Orientation::Vertical
 			spacing: 6
-			build!
 			
 			// BoxTemplate is not a widget but its root field is;
 			// use 'dot to specify that you are adding root to the gtk::Box:
@@ -163,7 +160,7 @@ fn main() -> glib::ExitCode {
 macro_rules! send {
 	($expr:expr => $sender:ident) => {
 		$sender.send($expr).unwrap_or_else(
-			move |error| glib::g_critical!("e_templates", "{error}")
+			move |error| glib::g_critical!("f_templates", "{error}")
 		)
 	};
 }

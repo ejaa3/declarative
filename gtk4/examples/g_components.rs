@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use declarative_gtk4::Composable;
+use declarative_gtk4::{Composable, builder_mode};
 use gtk::{glib, prelude::*};
 
 #[derive(Debug)]
@@ -24,7 +24,6 @@ declarative::view! { // component factory
 	gtk::Box root !{
 		spacing: 6
 		orientation: gtk::Orientation::Vertical
-		build!
 		
 		gtk::Label {
 			set_label: &format!("This is the {nth} Component")
@@ -69,8 +68,7 @@ declarative::view! { // component factory
 declarative::view! { // the main component
 	gtk::ApplicationWindow window !{
 		application: app
-		title: "Components"
-		build! ..
+		title: "Components" #
 		set_titlebar => gtk::HeaderBar 'wrap Some { }
 		
 		gtk::Box !{
@@ -80,7 +78,6 @@ declarative::view! { // the main component
 			margin_bottom: 6
 			margin_start: 6
 			margin_end: 6
-			build!
 			
 			// use `ref` to “refer” to a variable defined before the view:
 			ref first_component { }
@@ -122,7 +119,7 @@ fn main() {
 macro_rules! send {
 	($expr:expr => $sender:ident) => {
 		$sender.send($expr).unwrap_or_else(
-			move |error| glib::g_critical!("f_components", "{error}")
+			move |error| glib::g_critical!("g_components", "{error}")
 		)
 	};
 }
