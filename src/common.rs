@@ -9,7 +9,7 @@ use quote::quote;
 use std::cell::RefCell;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use crate::content::Content;
+use crate::{content::{self, Content}, Builder};
 
 thread_local![static COUNT: RefCell<usize> = RefCell::new(0)];
 
@@ -28,7 +28,7 @@ pub(crate) trait ParseReactive: Sized {
 	) -> syn::Result<Self>;
 }
 
-pub(crate) enum Object { Constructor(syn::Expr), Type(syn::TypePath) }
+pub(crate) enum Object { Expr(syn::Expr), Type(syn::TypePath) }
 
 impl Parse for Object {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -39,7 +39,7 @@ impl Parse for Object {
 		) {
 			Ok(Object::Type(input.parse()?))
 		} else {
-			Ok(Object::Constructor(input.parse()?))
+			Ok(Object::Expr(input.parse()?))
 		}
 	}
 }
@@ -47,7 +47,7 @@ impl Parse for Object {
 pub(crate) fn expand_object(
 	  object: Object,
 	 objects: &mut TokenStream,
-	builders: &mut Vec<TokenStream>,
+	builders: &mut Vec<Builder>,
 	   attrs: &[syn::Attribute],
 	    mut0: Option<syn::Token![mut]>,
 	    name: &syn::Ident,
@@ -55,14 +55,25 @@ pub(crate) fn expand_object(
 ) -> Option<usize> {
 	if builder {
 		builders.push(match object {
-			Object::Type(ty) => quote![#(#attrs)* let #mut0 #name = #ty::builder()],
-			Object::Constructor(call) => quote![#(#attrs)* let #mut0 #name = #call],
+			#[cfg(feature = "builder-mode")]
+			Object::Type(ty) => Builder(
+				quote![#(#attrs)* let #mut0 #name = ], quote![#ty => ], None
+			),
+			#[cfg(not(feature = "builder-mode"))]
+			Object::Type(ty) => quote![#(#attrs)* let #mut0 #name = #ty::#default()],
+			
+			#[cfg(feature = "builder-mode")]
+			Object::Expr(expr) => Builder(
+				quote![#(#attrs)* let #mut0 #name = ], quote![#expr ], None
+			),
+			#[cfg(not(feature = "builder-mode"))]
+			Object::Expr(expr) => quote![#(#attrs)* let #mut0 #name = #expr],
 		});
 		Some(builders.len() - 1)
 	} else {
 		objects.extend(match object {
 			Object::Type(ty) => quote![#(#attrs)* let #mut0 #name = #ty::default();],
-			Object::Constructor(call) => quote![#(#attrs)* let #mut0 #name = #call;],
+			Object::Expr(call) => quote![#(#attrs)* let #mut0 #name = #call;],
 		});
 		None
 	}
@@ -72,10 +83,10 @@ pub(crate) struct Pass(pub TokenStream);
 
 pub(crate) fn parse_pass(input: ParseStream, root: bool) -> syn::Result<Pass> {
 	if let Ok(mut0) = input.parse::<syn::Token![mut]>() {
-		if root { Err(syn::Error::new_spanned(mut0, "cannot use mut"))? }
+		if root { Err(syn::Error::new(mut0.span, "cannot use mut"))? }
 		Ok(Pass(quote![&#mut0]))
 	} else if let Ok(mov) = input.parse::<syn::Token![move]>() {
-		if root { Err(syn::Error::new_spanned(mov, "cannot use move"))? }
+		if root { Err(syn::Error::new(mov.span, "cannot use move"))? }
 		Ok(Pass(quote![]))
 	} else {
 		Ok(Pass(quote![&]))
@@ -120,7 +131,7 @@ pub(crate) struct Back {
 
 impl Back {
 	pub(crate) fn do_not_use(self, stream: &mut TokenStream) {
-		let error = syn::Error::new_spanned(self.token, "cannot use 'back");
+		let error = syn::Error::new(self.token.span(), "cannot use 'back");
 		stream.extend(error.into_compile_error())
 	}
 }
@@ -142,6 +153,39 @@ pub(crate) fn parse_back(
 	Ok(Back { token, battrs, mut0, back, build, props })
 }
 
+pub(crate) fn expand_back(
+	Back { back, build, props, .. }: Back,
+	 objects: &mut TokenStream,
+	builders: &mut Vec<Builder>,
+	settings: &mut TokenStream,
+	bindings: &mut TokenStream,
+	   attrs: Vec<syn::Attribute>,
+	    left: TokenStream,
+	   right: TokenStream,
+) {
+	let index = if build.is_some() {
+		#[cfg(feature = "builder-mode")]
+		builders.push(Builder(left, right, None));
+		
+		#[cfg(not(feature = "builder-mode"))]
+		builders.push(quote!(#left #right));
+		
+		Some(builders.len() - 1)
+	} else {
+		settings.extend(quote!(#left #right;));
+		None
+	};
+	
+	props.into_iter().for_each(|keyword| content::expand(
+		keyword, objects, builders, settings, bindings, &attrs, &[&back], index
+	));
+	
+	if let Some(index) = index {
+		let builder = builders.remove(index);
+		settings.extend(quote![#builder;])
+	}
+}
+
 pub(crate) fn object_content(
 	input: ParseStream, reactive: bool, root: bool
 ) -> syn::Result<(Vec<Content>, Option<Back>)> {
@@ -153,9 +197,9 @@ pub(crate) fn object_content(
 		let content = Content::parse(&braces, None, reactive)?;
 		
 		if let Content::Back(ba) = content {
-			if root { return Err(syn::Error::new_spanned(ba.token, "cannot use 'back")) }
+			if root { return Err(syn::Error::new(ba.token.span(), "cannot use 'back")) }
 			if back.is_some() {
-				return Err(syn::Error::new_spanned(ba.token, "cannot use 'back more than once"))
+				return Err(syn::Error::new(ba.token.span(), "cannot use 'back more than once"))
 			}
 			back = Some(ba)
 		} else { props.push(content); }
@@ -197,18 +241,11 @@ impl quote::ToTokens for Clone {
 	}
 }
 
-pub(crate) fn extend_attributes(attrs: &mut Vec<syn::Attribute>, pattrs: &[syn::Attribute]) {
-	let current = std::mem::take(attrs);
-	attrs.reserve(pattrs.len() + current.len());
-	attrs.extend_from_slice(pattrs);
-	attrs.extend(current.into_iter());
-}
-
 pub(crate) fn parse_clones(input: ParseStream) -> syn::Result<Punctuated<Clone, syn::Token![,]>> {
 	let Ok(keyword) = input.parse::<syn::Lifetime>() else { return Ok(Punctuated::new()) };
 	
 	if keyword.ident != "clone" {
-		Err(syn::Error::new_spanned(keyword, "expected 'clone"))
+		Err(syn::Error::new(keyword.span(), "expected 'clone"))
 	} else if input.peek(syn::token::Brace) {
 		let braces; syn::braced!(braces in input);
 		braces.parse_terminated(Clone::parse, syn::Token![,])
@@ -217,4 +254,11 @@ pub(crate) fn parse_clones(input: ParseStream) -> syn::Result<Punctuated<Clone, 
 		clones.push(input.parse()?);
 		Ok(clones)
 	}
+}
+
+pub(crate) fn extend_attributes(attrs: &mut Vec<syn::Attribute>, pattrs: &[syn::Attribute]) {
+	let current = std::mem::take(attrs);
+	attrs.reserve(pattrs.len() + current.len());
+	attrs.extend_from_slice(pattrs);
+	attrs.extend(current.into_iter());
 }

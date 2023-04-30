@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use declarative_gtk4::Composable;
+use declarative_gtk4::{Composable, builder_mode};
 use gtk::{glib, prelude::*};
 
 #[derive(Debug)]
@@ -22,8 +22,7 @@ fn update_state(state: &mut State, msg: Msg) {
 declarative::view! {
 	gtk::ApplicationWindow window !{
 		application: app
-		title: "My Application"
-		build! ..
+		title: "My Application" #
 		set_titlebar => gtk::HeaderBar 'wrap Some { }
 		
 		gtk::Box !{
@@ -32,8 +31,7 @@ declarative::view! {
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
-			margin_end: 6
-			build!
+			margin_end: 6 #
 			
 			gtk::Label {
 				'bind set_label: &format!("The count is: {}", state.count)

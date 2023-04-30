@@ -14,7 +14,7 @@ repository  = { workspace = true }
 version     = { workspace = true }
 
 [dependencies]
-declarative = { path = '..' }
+declarative = { path = '..', features = ['builder-mode'] }
 gtk = { version = '0', default-features = false, package = 'gtk4' }
 adw = { version = '0', default-features = false, package = 'libadwaita', optional = true }
 

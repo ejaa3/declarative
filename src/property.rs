@@ -11,7 +11,7 @@ use super::{common, content::{self, Content}, item};
 
 pub(crate) struct Prop<T> {
 	attrs: Vec<syn::Attribute>,
-	ident: syn::Ident,
+	 prop: syn::Ident,
 	 gens: Option<(syn::Token![::], syn::AngleBracketedGenericArguments)>,
 	 args: Punctuated<syn::Expr, syn::Token![,]>,
 	 rest: Option<TokenStream>,
@@ -24,7 +24,7 @@ impl<T: common::ParseReactive> common::ParseReactive for Prop<T> {
 	      reactive: bool,
 	) -> syn::Result<Prop<T>> {
 		let attrs = attrs.unwrap_or_default();
-		let ident = input.parse()?;
+		let prop = input.parse()?;
 		
 		let gens = input.parse::<syn::Token![::]>().ok()
 			.map(|sep| Ok::<_, syn::Error>((sep, input.parse()?))).transpose()?;
@@ -36,7 +36,8 @@ impl<T: common::ParseReactive> common::ParseReactive for Prop<T> {
 			let brackets; syn::bracketed!(brackets in input);
 			
 			while !brackets.is_empty() {
-				if brackets.parse::<syn::Token![..]>().is_ok() {
+				if brackets.parse::<syn::Token![@]>().is_ok() {
+					brackets.parse::<syn::Token![,]>()?;
 					rest = Some(brackets.parse()?);
 					break;
 				}
@@ -51,7 +52,7 @@ impl<T: common::ParseReactive> common::ParseReactive for Prop<T> {
 			args.push_punct(Default::default());
 		}
 		
-		Ok(Prop { attrs, ident, gens, args, rest, value: T::parse(input, None, reactive)? })
+		Ok(Prop { attrs, prop, gens, args, rest, value: T::parse(input, None, reactive)? })
 	}
 }
 
@@ -66,31 +67,22 @@ impl common::ParseReactive for Value {
 	        _attrs: Option<Vec<syn::Attribute>>,
 	      reactive: bool,
 	) -> syn::Result<Self> {
-		let ahead = input.lookahead1();
-		
-		if  ahead.peek (syn::Token![:])
-		||  ahead.peek (syn::Token![!])
-		||  input.peek (syn::Token![->])
-		&&  input.peek3(syn::token::Brace)
-		||  input.peek (syn::Token![=])
-		&& !input.peek2(syn::Token![>]) {
-			Ok(Value::Expr(Expr::parse(input, None, reactive)?))
-		} else if ahead.peek(syn::Token![=>]) {
+		if input.peek(syn::Token![=>]) {
 			input.parse::<syn::Token![=>]>()?;
 			Ok(Value::ItemCall(item::parse(input, reactive)?))
-		} else if ahead.peek(syn::Token![->]) {
+		} else if input.peek(syn::Token![->]) && !input.peek3(syn::token::Brace) {
 			input.parse::<syn::Token![->]>()?;
 			Ok(Value::ItemField(item::parse(input, reactive)?))
 		} else {
-			Err(ahead.error())
+			Ok(Value::Expr(Expr::parse(input, None, reactive)?))
 		}
 	}
 }
 
 pub(crate) fn expand_value(
-	Prop { mut attrs, ident, gens, args, rest, value }: Prop<Value>,
+	Prop { mut attrs, prop, gens, args, rest, value }: Prop<Value>,
 	 objects: &mut TokenStream,
-	builders: &mut Vec<TokenStream>,
+	builders: &mut Vec<crate::Builder>,
 	settings: &mut TokenStream,
 	bindings: &mut TokenStream,
 	  pattrs: &[syn::Attribute],
@@ -102,18 +94,18 @@ pub(crate) fn expand_value(
 			common::extend_attributes(&mut attrs, pattrs);
 			item::expand(
 				item, objects, builders, settings, bindings,
-				&name, attrs, ident, gens, args, rest, builder, false
+				&name, attrs, prop, gens, args, rest, builder, false
 			);
 		}
 		Value::ItemField(item) => {
 			common::extend_attributes(&mut attrs, pattrs);
 			item::expand(
 				item, objects, builders, settings, bindings,
-				&name, attrs, ident, gens, args, rest, builder, true
+				&name, attrs, prop, gens, args, rest, builder, true
 			);
 		}
 		Value::Expr(value) => {
-			let prop = Prop { attrs, ident, gens, args, rest, value };
+			let prop = Prop { attrs, prop, gens, args, rest, value };
 			
 			let Some(expr) = expand_expr(
 				prop, objects, builders, settings,
@@ -121,6 +113,11 @@ pub(crate) fn expand_value(
 			) else { return };
 			
 			let Some(index) = builder else { return settings.extend(expr) };
+			
+			#[cfg(feature = "builder-mode")]
+			builders[index].1.extend(expr);
+			
+			#[cfg(not(feature = "builder-mode"))]
 			builders[index].extend(expr);
 		}
 	}
@@ -132,9 +129,9 @@ pub(crate) enum Expr {
 		 value: syn::Expr,
 		  back: Option<common::Back>,
 	},
-	Invoke { back: Option<common::Back> },
-	Field(Punctuated<common::Clone, syn::Token![,]>, syn::Expr),
-	Edit(Vec<Content>),
+	Invoke (Option<common::Back>),
+	Field  (Punctuated<common::Clone, syn::Token![,]>, syn::Expr),
+	Edit   (Vec<Content>),
 }
 
 impl common::ParseReactive for Expr {
@@ -142,8 +139,6 @@ impl common::ParseReactive for Expr {
 	        _attrs: Option<Vec<syn::Attribute>>,
 	      reactive: bool,
 	) -> syn::Result<Self> {
-		let ahead = input.lookahead1();
-		
 		let back = || {
 			let Ok(keyword) = input.fork().parse::<syn::Lifetime>()
 				else { return Ok::<_, syn::Error>(None) };
@@ -154,35 +149,31 @@ impl common::ParseReactive for Expr {
 			} else { Ok(None) }
 		};
 		
-		if ahead.peek(syn::Token![:]) {
-			input.parse::<syn::Token![:]>()?;
+		if input.parse::<syn::Token![:]>().is_ok() {
 			let clones = common::parse_clones(input)?;
 			let  value = input.parse()?;
 			let   back = back()?;
 			input.parse::<Option<syn::Token![;]>>()?;
 			Ok(Expr::Call { clones, value, back })
-		} else if ahead.peek(syn::Token![!]) {
-			input.parse::<syn::Token![!]>()?;
-			Ok(Expr::Invoke { back: back()? })
-		} else if ahead.peek(syn::Token![=]) {
-			input.parse::<syn::Token![=]>()?;
+		} else if input.parse::<syn::Token![=]>().is_ok() {
 			let expr = Expr::Field(common::parse_clones(input)?, input.parse()?);
 			input.parse::<Option<syn::Token![;]>>()?;
 			Ok(expr)
-		} else if ahead.peek(syn::Token![->]) {
-			input.parse::<syn::Token![->]>()?;
+		} else if input.parse::<syn::Token![->]>().is_ok() {
 			let braces; syn::braced!(braces in input);
 			Ok(Expr::Edit(common::content(&braces, reactive)?))
+		} else if input.parse::<syn::Token![;]>().is_ok() {
+			Ok(Expr::Invoke(None))
 		} else {
-			Err(ahead.error())
+			Ok(Expr::Invoke(back()?))
 		}
 	}
 }
 
 pub(crate) fn expand_expr(
-	Prop { mut attrs, ident, gens, args, rest, value }: Prop<Expr>,
+	Prop { mut attrs, prop, gens, args, rest, value }: Prop<Expr>,
 	 objects: &mut TokenStream,
-	builders: &mut Vec<TokenStream>,
+	builders: &mut Vec<crate::Builder>,
 	settings: &mut TokenStream,
 	bindings: &mut TokenStream,
 	  pattrs: &[syn::Attribute],
@@ -194,7 +185,7 @@ pub(crate) fn expand_expr(
 		
 		let mut field = Vec::with_capacity(name.len() + 1);
 		field.extend_from_slice(name);
-		field.push(&ident);
+		field.push(&prop);
 		
 		content.into_iter().for_each(|content| content::expand(
 			content, objects, builders, settings, bindings, &attrs, &field, None
@@ -218,42 +209,26 @@ pub(crate) fn expand_expr(
 				quote![{ #(let #clones;)* #value }]
 			} else { quote![#value] };
 			
-			return Some(quote![#(#pattrs)* #(#attrs)* #(#name.)* #ident = #value;])
+			return Some(quote![#(#pattrs)* #(#attrs)* #(#name.)* #prop = #value;])
 		},
-		Expr::Invoke { back } => (quote![], back),
+		Expr::Invoke(back) => (quote![], back),
 		Expr::Edit(..) => unreachable!(),
 	};
 	
 	if build {
 		if let Some(back) = back { back.do_not_use(objects); return None }
-		return Some(quote![.#ident #sep #gens (#args #assigned #rest)])
+		return Some(quote![.#prop #sep #gens (#args #assigned #rest)])
 	}
 	
-	let Some(common::Back { mut0, back, build, props, .. }) = back else {
-		return Some(quote![#(#pattrs)* #(#attrs)* #(#name.)* #ident #sep #gens (#args #assigned #rest);])
-	};
+	let Some(back0) = back else { return quote! {
+		#(#pattrs)* #(#attrs)* #(#name.)* #prop #sep #gens (#args #assigned #rest);
+	}.into() };
 	
-	let (semi, index) = if build.is_some() {
-		builders.push(TokenStream::new());
-		(None, Some(builders.len() - 1))
-	} else {
-		(Some(<syn::Token![;]>::default()), None)
-	};
-	
-	settings.extend(quote::quote! {
-		#(#pattrs)* #(#attrs)*
-		let #mut0 #back = #(#name.)* #ident #sep #gens (#args #assigned #rest) #semi
-	});
+	let common::Back { mut0, back, .. } = &back0;
+	let left  = quote! { #(#pattrs)* #(#attrs)* let #mut0 #back = };
+	let right = quote! { #(#name.)* #prop #sep #gens (#args #assigned #rest) };
 	
 	common::extend_attributes(&mut attrs, pattrs);
-	props.into_iter().for_each(|keyword| content::expand(
-		keyword, objects, builders, settings, bindings, &attrs, &[&back], index
-	));
-	
-	if let Some(index) = index {
-		let builder = builders.remove(index);
-		settings.extend(quote::quote![#builder;])
-	}
-	
+	common::expand_back(back0, objects, builders, settings, bindings, attrs, left, right);
 	None
 }

@@ -108,7 +108,7 @@ impl<T: Expand> ParseReactive for Inner<T> {
 pub(crate) fn expand_if<T: Expand>(
 	If { else0, if0, expr, props }: If<T>,
 	 objects: &mut TokenStream,
-	builders: &mut Vec<TokenStream>,
+	builders: &mut Vec<crate::Builder>,
 	settings: &mut TokenStream,
 	bindings: &mut TokenStream,
 	    name: &[&syn::Ident],
@@ -127,7 +127,7 @@ pub(crate) fn expand_if<T: Expand>(
 pub(crate) fn expand_match<T: Expand>(
 	Match { token, expr, arms }: Match<T>,
 	 objects: &mut TokenStream,
-	builders: &mut Vec<TokenStream>,
+	builders: &mut Vec<crate::Builder>,
 	settings: &mut TokenStream,
 	bindings: &mut TokenStream,
 	    name: &[&syn::Ident],
@@ -153,7 +153,7 @@ pub(crate) fn expand_match<T: Expand>(
 pub(crate) fn expand_inner<T: Expand>(
 	   inner: Inner<T>,
 	 objects: &mut TokenStream,
-	builders: &mut Vec<TokenStream>,
+	builders: &mut Vec<crate::Builder>,
 	settings: &mut TokenStream,
 	bindings: &mut TokenStream,
 	   block: Option<&mut TokenStream>,
@@ -233,7 +233,7 @@ pub(crate) fn expand_inner<T: Expand>(
 pub(crate) trait Expand: ParseReactive {
 	fn expand(self,
 		 objects: &mut TokenStream,
-		builders: &mut Vec<TokenStream>,
+		builders: &mut Vec<crate::Builder>,
 		settings: &mut TokenStream,
 		bindings: &mut TokenStream,
 		    name: &[&syn::Ident],
@@ -243,7 +243,7 @@ pub(crate) trait Expand: ParseReactive {
 impl Expand for Prop<Expr> {
 	fn expand(self,
 		 objects: &mut TokenStream,
-		builders: &mut Vec<TokenStream>,
+		builders: &mut Vec<crate::Builder>,
 		settings: &mut TokenStream,
 		bindings: &mut TokenStream,
 		    name: &[&syn::Ident],
@@ -257,7 +257,7 @@ impl Expand for Prop<Expr> {
 impl Expand for content::Content {
 	fn expand(self,
 		 objects: &mut TokenStream,
-		builders: &mut Vec<TokenStream>,
+		builders: &mut Vec<crate::Builder>,
 		settings: &mut TokenStream,
 		bindings: &mut TokenStream,
 		    name: &[&syn::Ident],

@@ -31,3 +31,6 @@ proc-macro = true
 proc-macro2 = '1'
 quote = '1'
 syn = { version = '2', default-features = false, features = ['parsing', 'visit-mut'] }
+
+[features]
+builder-mode = []

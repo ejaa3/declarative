@@ -20,7 +20,11 @@ pub(crate) enum Binding {
 pub(crate) enum Content {
 	Back      (common::Back),
 	None      (Prop<Value>),
-	Built     (Vec<Content>),
+	Built {
+		  token: syn::Token![#],
+		no_more: Option<syn::Token![!]>,
+		content: Vec<Content>,
+	},
 	Component (component::Component),
 	Inner     (Box<conditional::Inner<Content>>),
 	Bind {
@@ -44,8 +48,12 @@ impl ParseReactive for Content {
 	        _attrs: Option<Vec<syn::Attribute>>,
 	      reactive: bool,
 	) -> syn::Result<Self> {
-		if input.parse::<syn::Token![..]>().is_ok() {
-			return Ok(Content::Built(common::content(input, reactive)?))
+		if input.peek(syn::Token![#]) && !input.peek2(syn::token::Bracket) {
+			let   token = input.parse()?;
+			let no_more = input.parse()?;
+			let content = common::content(input, reactive)?;
+			
+			return Ok(Content::Built { token, no_more, content })
 		}
 		
 		let attrs = input.call(syn::Attribute::parse_outer)?;
@@ -57,12 +65,12 @@ impl ParseReactive for Content {
 				)),
 				"bind" | "bind_only" | "bind_now" | "binding" =>
 					if reactive { keyword } else {
-						Err(syn::Error::new_spanned(
-							&keyword, format!("cannot use {keyword} here")
+						Err(syn::Error::new(
+							keyword.span(), format!("cannot use {keyword} here")
 						))?
 					}
-				_ => return Err(syn::Error::new_spanned(
-					&keyword, format!("unknown keyword {keyword}")
+				_ => return Err(syn::Error::new(
+					keyword.span(), format!("unknown keyword {keyword}")
 				))
 			}
 		} else if input.peek(syn::Token![if]) || input.peek(syn::Token![match]) {
@@ -134,7 +142,7 @@ impl ParseReactive for Content {
 pub(crate) fn expand(
 	 content: Content,
 	 objects: &mut TokenStream,
-	builders: &mut Vec<TokenStream>,
+	builders: &mut Vec<crate::Builder>,
 	settings: &mut TokenStream,
 	bindings: &mut TokenStream,
 	  pattrs: &[syn::Attribute],
@@ -146,8 +154,17 @@ pub(crate) fn expand(
 		Content::None(prop) => expand_value(
 			prop, objects, builders, settings, bindings, &pattrs, name, builder
 		),
-		Content::Built(keywords) => for keyword in keywords {
-			expand(keyword, objects, builders, settings, bindings, pattrs, name, None);
+		Content::Built { token, no_more, content } => {
+			let Some(index) = builder else {
+				let error = syn::Error::new(token.span, "only allowed in builder mode");
+				return objects.extend(error.into_compile_error())
+			};
+			
+			builders[index].2 = no_more;
+			
+			for content in content {
+				expand(content, objects, builders, settings, bindings, pattrs, name, None);
+			}
 		}
 		Content::Component(component) => component::expand(
 			component, objects, builders, settings, bindings, pattrs, Some(name)

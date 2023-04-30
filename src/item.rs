@@ -13,7 +13,7 @@ pub(crate) struct Item {
 	  pass: common::Pass,
 	object: Option<common::Object>,
 	  mut0: Option<syn::Token![mut]>,
-	  name: syn::Ident,
+	  item: syn::Ident,
 	   dot: Option<TokenStream>,
 	  wrap: Punctuated<syn::Path, syn::Token![,]>,
 	 build: Option<syn::Token![!]>,
@@ -26,7 +26,7 @@ pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Resu
 	let ref0 = input.parse::<syn::Token![ref]>().is_ok();
 	let object = (!ref0).then(|| input.parse()).transpose()?;
 	let mut0 = if !ref0 { input.parse()? } else { None };
-	let name = if ref0 { Some(input.parse()?) } else { input.parse()? }
+	let item = if ref0 { Some(input.parse()?) } else { input.parse()? }
 		.unwrap_or_else(|| syn::Ident::new(&common::count(), input.span()));
 	
 	let mut dot = None;
@@ -42,7 +42,7 @@ pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Resu
 				))),
 				
 				"dot" => if dot.is_some() {
-					Err(syn::Error::new_spanned(keyword, "expected a single 'dot"))?
+					Err(syn::Error::new(keyword.span(), "expected a single 'dot"))?
 				} else { dot = Some(common::dot(input)?) }
 				
 				"wrap" => if wrap.is_none() {
@@ -56,7 +56,7 @@ pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Resu
 					}
 				} else { Err(input.error("expected a single 'wrap"))? }
 				
-				_ => Err(syn::Error::new_spanned(keyword, "expected 'back, 'dot or 'wrap"))?
+				_ => Err(syn::Error::new(keyword.span(), "expected 'back, 'dot or 'wrap"))?
 			}
 		}
 		
@@ -65,16 +65,16 @@ pub(crate) fn parse(input: syn::parse::ParseStream, reactive: bool) -> syn::Resu
 	
 	let wrap = wrap.unwrap_or_default();
 	
-	Ok(Item { pass, object, mut0, name, dot, wrap, build, props, back })
+	Ok(Item { pass, object, mut0, item, dot, wrap, build, props, back })
 }
 
 pub(crate) fn expand(
-	Item { pass, object, mut0, name, dot, wrap, build, props, back }: Item,
+	Item { pass, object, mut0, item, dot, wrap, build, props, back }: Item,
 	  objects: &mut TokenStream,
-	 builders: &mut Vec<TokenStream>,
+	 builders: &mut Vec<crate::Builder>,
 	 settings: &mut TokenStream,
 	 bindings: &mut TokenStream,
-	     root: &[&syn::Ident],
+	     name: &[&syn::Ident],
 	mut attrs: Vec<syn::Attribute>,
 	    ident: syn::Ident,
 	     gens: Option<(syn::Token![::], syn::AngleBracketedGenericArguments)>,
@@ -84,48 +84,39 @@ pub(crate) fn expand(
 	    field: bool,
 ) {
 	let new_builder = object.map(|object| common::expand_object(
-		object, objects, builders, &attrs, mut0, &name, build.is_some()
+		object, objects, builders, &attrs, mut0, &item, build.is_some()
 	)).unwrap_or(None);
 	
 	props.into_iter().for_each(|keyword| content::expand(
-		keyword, objects, builders, settings, bindings, &attrs, &[&name], new_builder
+		keyword, objects, builders, settings, bindings, &attrs, &[&item], new_builder
 	));
 	
 	let (sep, gens) = gens.unzip();
 	let common::Pass(pass) = pass;
 	
-	let mut set = quote![#pass #name];
+	let mut set = quote![#pass #item];
 	wrap.into_iter().for_each(|wrap| { set = quote![#wrap(#set)] });
 	
 	if field { // TODO builder?
 		if let Some(back) = back { return back.do_not_use(objects) }
-		settings.extend(quote![#(#attrs)* #(#root.)* #ident = #set #dot;])
+		settings.extend(quote![#(#attrs)* #(#name.)* #ident = #set #dot;])
 	} else if let Some(index) = builder {
 		if let Some(back) = back { return back.do_not_use(objects) }
-		builders[index].extend(quote![.#ident #sep #gens (#args #set #dot, #rest)])
-	} else if let Some(common::Back { battrs, mut0, back, build, props, .. }) = back {
-		attrs.extend(battrs);
 		
-		let (semi, index) = if build.is_some() {
-			builders.push(TokenStream::new());
-			(None, Some(builders.len() - 1))
-		} else {
-			(Some(<syn::Token![;]>::default()), None)
-		};
+		#[cfg(feature = "builder-mode")]
+		builders[index].1.extend(quote![.#ident #sep #gens (#args #set #dot, #rest)]);
 		
-		settings.extend(quote! {
-			#(#attrs)* let #mut0 #back = #(#root.)* #ident #sep #gens (#args #set #dot, #rest) #semi
-		});
+		#[cfg(not(feature = "builder-mode"))]
+		builders[index].extend(quote![.#ident #sep #gens (#args #set #dot, #rest)]);
+	} else if let Some(mut back0) = back {
+		let common::Back { battrs, mut0, back, .. } = &mut back0;
+		attrs.extend(std::mem::take(battrs));
 		
-		props.into_iter().for_each(|keyword| content::expand(
-			keyword, objects, builders, settings, bindings, &attrs, &[&back], index
-		));
+		let left  = quote! { #(#attrs)* let #mut0 #back = };
+		let right = quote! { #(#name.)* #ident #sep #gens (#args #set #dot, #rest) };
 		
-		if let Some(index) = index {
-			let builder = builders.remove(index);
-			settings.extend(quote![#builder;])
-		}
+		common::expand_back(back0, objects, builders, settings, bindings, attrs, left, right);
 	} else {
-		settings.extend(quote![#(#attrs)* #(#root.)* #ident #sep #gens (#args #set #dot, #rest);])
+		settings.extend(quote![#(#attrs)* #(#name.)* #ident #sep #gens (#args #set #dot, #rest);])
 	}
 }

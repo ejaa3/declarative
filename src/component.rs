@@ -5,6 +5,7 @@
  */
 
 use proc_macro2::TokenStream;
+use quote::quote;
 use crate::{content::{self, Content}, common};
 
 pub(crate) struct Component {
@@ -41,7 +42,7 @@ pub(crate) fn parse(
 			let Ok(keyword) = input.parse::<syn::Lifetime>() else { break };
 			
 			if root {
-				return Err(syn::Error::new_spanned(keyword, "cannot use 'keywords here"))
+				return Err(syn::Error::new(keyword.span(), "cannot use 'keywords here"))
 			}
 			
 			match keyword.ident.to_string().as_str() {
@@ -50,14 +51,14 @@ pub(crate) fn parse(
 				))),
 				
 				"dot" => if dot.is_some() {
-					Err(syn::Error::new_spanned(keyword, "expected a single 'dot"))?
+					Err(syn::Error::new(keyword.span(), "expected a single 'dot"))?
 				} else { dot = Some(common::dot(input)?) }
 				
 				"with" => if with.is_some() {
-					Err(syn::Error::new_spanned(keyword, "expected a single 'with"))?
+					Err(syn::Error::new(keyword.span(), "expected a single 'with"))?
 				} else { with = Some(input.parse()?) }
 				
-				_ => Err(syn::Error::new_spanned(keyword, "expected 'back, 'dot or 'with"))?
+				_ => Err(syn::Error::new(keyword.span(), "expected 'back, 'dot or 'with"))?
 			}
 		}
 		
@@ -70,7 +71,7 @@ pub(crate) fn parse(
 pub(crate) fn expand(
 	Component { mut attrs, pass, object, mut0, name, dot, with, build, props, back }: Component,
 	   objects: &mut TokenStream,
-	  builders: &mut Vec<TokenStream>,
+	  builders: &mut Vec<crate::Builder>,
 	  settings: &mut TokenStream,
 	  bindings: &mut TokenStream,
 	    pattrs: &[syn::Attribute],
@@ -82,43 +83,27 @@ pub(crate) fn expand(
 		object, objects, builders, &attrs, mut0, &name, build.is_some()
 	)).unwrap_or(None);
 	
-	props.into_iter().for_each(|keyword| content::expand(
-		keyword, objects, builders, settings, bindings, &attrs, &[&name], builder
+	props.into_iter().for_each(|content| content::expand(
+		content, objects, builders, settings, bindings, &attrs, &[&name], builder
 	));
 	
 	let Some(composable) = composable else { return };
-	let with = with.unwrap_or_else(|| syn::Expr::Verbatim(quote::quote!(())));
+	let with = with.unwrap_or_else(|| syn::Expr::Verbatim(quote!(())));
 	let common::Pass(pass) = pass;
 	
-	if let Some(common::Back { token: _, battrs, mut0, back, build, props }) = back {
-		attrs.extend(battrs);
-		
-		let (semi, index) = if build.is_some() {
-			builders.push(TokenStream::new());
-			(None, Some(builders.len() - 1))
-		} else {
-			(Some(<syn::Token![;]>::default()), None)
-		};
-		
-		settings.extend(quote::quote! {
-			#(#attrs)*
-			let #mut0 #back = #(#composable.)* as_composable_add_component(
-				#pass #name #dot, #with
-			) #semi
-		});
-		
-		props.into_iter().for_each(|keyword| content::expand(
-			keyword, objects, builders, settings, bindings, &attrs, &[&back], index
-		));
-		
-		if let Some(index) = index {
-			let builder = builders.remove(index);
-			settings.extend(quote::quote![#builder;])
-		}
-	} else {
-		settings.extend(quote::quote! {
+	let Some(mut back0) = back else {
+		return settings.extend(quote! {
 			#(#attrs)*
 			#(#composable.)* as_composable_add_component(#pass #name #dot, #with);
 		});
-	}
+	};
+	
+	let common::Back { battrs, mut0, back, .. } = &mut back0;
+	attrs.extend(std::mem::take(battrs));
+	
+	let left  = quote! { #(#attrs)* let #mut0 #back = };
+	let right = quote! {
+		#(#composable.)* as_composable_add_component(#pass #name #dot, #with)
+	};
+	common::expand_back(back0, objects, builders, settings, bindings, attrs, left, right);
 }

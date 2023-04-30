@@ -8,6 +8,7 @@
 //! convenient syntax when using the macro with the gtk4 and libadwaita crates.
 
 #![cfg_attr(feature = "deprecated", allow(deprecated))]
+#![warn(missing_docs)]
 
 pub use declarative::view;
 
@@ -19,6 +20,36 @@ use gtk::traits::{
 
 #[cfg(any(feature = "gtk_v4_8", feature = "dox"))]
 use gtk::traits::CheckButtonExt;
+
+#[macro_export]
+/// Macro called by the [view!] macro when the view is made in builder mode.
+macro_rules! builder_mode {
+	(!$type:ty => $($token:tt)+) => { <$type>::builder() $($token)+ };
+	( $type:ty => $($token:tt)+) => { <$type>::builder() $($token)+.build() };
+	(!$($expr:expr)+) => { $($expr)+ };
+	( $($expr:expr)+) => { $($expr)+.build() };
+}
+
+/** With this trait you can write:
+~~~ rust
+declarative::view! {
+	gtk::Box {
+		gtk::Label { }
+	} ..
+}
+~~~
+Instead of:
+~~~ rust
+declarative::view! {
+	gtk::Box {
+		append => gtk::Label { }
+	} ..
+}
+~~~ */
+pub trait Composable<Component, With, Return> {
+	/// Method called by the [view!] macro when a "component assignment" is performed.
+	fn as_composable_add_component(&self, component: Component, with: With) -> Return;
+}
 
 macro_rules! fallback {
 	(@($($foo:tt)*) $($bar:tt)+) => { $($bar)+ };
@@ -55,27 +86,6 @@ macro_rules! composable {
 			}
 		}
 	};
-}
-
-/** With this trait you can write:
-~~~ rust
-declarative::view! {
-	gtk::Box {
-		gtk::Label { }
-	} ..
-}
-~~~
-Instead of:
-~~~ rust
-declarative::view! {
-	gtk::Box {
-		append => gtk::Label { }
-	} ..
-}
-~~~ */
-pub trait Composable<Component, With, Return> {
-	/// Method called by the [view!] macro when a "component assignment" is performed.
-	fn as_composable_add_component(&self, component: Component, with: With) -> Return;
 }
 
 composable!(gio::Menu => &gio::MenuItem, append_item());

@@ -88,3 +88,17 @@ pub fn view(stream: TokenStream) -> TokenStream {
 		quote![#syntax_tree].into()
 	} else { stream.into() }
 }
+
+#[cfg(not(feature = "builder-mode"))]
+type Builder = TokenStream2;
+
+#[cfg(feature = "builder-mode")]
+struct Builder(TokenStream2, TokenStream2, Option<syn::Token![!]>);
+
+#[cfg(feature = "builder-mode")]
+impl quote::ToTokens for Builder {
+	fn to_tokens(&self, tokens: &mut TokenStream2) {
+		let Builder(left, right, no_more) = self;
+		tokens.extend(quote![#left builder_mode!(#no_more #right)])
+	}
+}
