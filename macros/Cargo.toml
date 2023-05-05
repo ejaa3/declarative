@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+#
+# SPDX-License-Identifier: Unlicense
+
+[package]
+name        = 'declarative-macros'
+authors     = { workspace = true }
+categories  = { workspace = true }
+description = { workspace = true }
+edition     = { workspace = true }
+keywords    = { workspace = true }
+license     = { workspace = true }
+repository  = { workspace = true }
+version     = { workspace = true }
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = '1'
+quote = '1'
+syn = { version = '2', default-features = false, features = ['parsing', 'visit-mut'] }
+
+[features]
+builder-mode = []

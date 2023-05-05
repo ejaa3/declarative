@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+	SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+	
+	SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+	<linearGradient id="gradient" x1="64" y1="128" x2="64" y2="0" gradientUnits="userSpaceOnUse">
+		<stop stop-color="#252C30" offset="0"/>
+		<stop stop-color="#3B3C42" offset="1"/>
+	</linearGradient>
+	<circle cx="64" cy="64" r="60" stroke="#BF9579" stroke-width="6" fill="url(#gradient)"/>
+	<circle cx="64" cy="64" r="63.5" stroke="#3B3C42" fill="none"/>
+	<path stroke="#54B071" stroke-width="6" d="m 27,39 36,9"/>
+	<path stroke="#54B071" stroke-width="6" d="m 24,57 36,9"/>
+	<path stroke="#54B071" stroke-width="6" d="M 30,69 39,33"/>
+	<path stroke="#54B071" stroke-width="6" d="M 48,72 57,36"/>
+	<circle stroke="#EF7A8A" stroke-width="6" cx="30" cy="84" r="3"/>
+	<circle stroke="#EF7A8A" stroke-width="6" cx="48" cy="90" r="3"/>
+	<circle fill="none" stroke="#7D9BF1" stroke-width="6" cx="81" cy="81" r="12"/>
+	<path stroke="#7D9BF1" stroke-width="6" d="M 90,96 102,48"/>
+</svg>

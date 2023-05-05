@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use declarative_gtk4::{Composable, builder_mode};
+use declarative::{builder_mode, clone};
 use gtk::{glib, prelude::*};
 
 #[derive(Debug)]
@@ -19,51 +19,53 @@ fn update_state(state: &mut State, msg: Msg) {
 	}
 }
 
-declarative::view! {
+#[declarative::view {
 	gtk::ApplicationWindow window !{
 		application: app
-		title: "My Application" #
-		set_titlebar => gtk::HeaderBar 'wrap Some { }
+		title: "My Application"
 		
-		gtk::Box !{
+		gtk::HeaderBar #titlebar(&#) { }
+		
+		gtk::Box #child(&#) !{
 			orientation: gtk::Orientation::Vertical
 			spacing: 6
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
-			margin_end: 6 #
+			margin_end: 6 #..
 			
-			gtk::Label {
-				'bind set_label: &format!("The count is: {}", state.count)
+			gtk::Label #append(&#) {
+				'bind! set_label: &format!("The count is: {}", state.count)
 			}
 			
-			gtk::Button::with_label("Increase") {
-				connect_clicked: 'clone sender
-					move |_| send!(Msg::Increase => sender)
+			gtk::Button::with_label("Increase") #append(&#) {
+				connect_clicked: clone! {
+					sender; move |_| send!(Msg::Increase => sender)
+				}
 			}
 			
-			gtk::Button::with_label("Decrease") {
+			gtk::Button::with_label("Decrease") #append(&#) {
 				connect_clicked: move |_| send!(Msg::Decrease => sender)
 			}
 			
-			'binding update_view: move |state: &State| { bindings!(); }
+			'binding update_view = move |state: &State| bindings!()
 		}
-	} ..
-	
-	fn window(app: &gtk::Application) -> gtk::ApplicationWindow {
-		let mut state = State { count: 0 };
-		let (sender, receiver) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
-		
-		expand_view_here!();
-		
-		receiver.attach(None, move |msg| {
-			update_state(&mut state, msg);
-			update_view(&state);
-			glib::Continue(true)
-		});
-		
-		window
 	}
+}]
+
+fn window(app: &gtk::Application) -> gtk::ApplicationWindow {
+	let mut state = State { count: 0 };
+	let (sender, receiver) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
+	
+	expand_view_here! { }
+	
+	receiver.attach(None, move |msg| {
+		update_state(&mut state, msg);
+		update_view(&state);
+		glib::Continue(true)
+	});
+	
+	window
 }
 
 fn main() -> glib::ExitCode {
