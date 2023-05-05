@@ -26,7 +26,7 @@ repository  = { workspace = true }
 version     = { workspace = true }
 
 [dependencies]
-declarative = { package = 'declarative-macros', path = 'macros' }
+declarative = { package = 'declarative-macros', version = '0', path = 'macros' }
 
 [features]
 builder-mode = ['declarative/builder-mode']
