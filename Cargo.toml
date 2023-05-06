@@ -15,6 +15,7 @@ repository  = 'https://github.com/ejaa3/declarative/'
 version     = '0.1.0'
 
 [package]
+exclude     = ['/.github', '/.gitignore', '/examples']
 name        = 'declarative'
 authors     = { workspace = true }
 categories  = { workspace = true }

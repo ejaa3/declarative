@@ -15,10 +15,13 @@ To use it, add to your Cargo.toml:
 
 ~~~ toml
 [dependencies.declarative]
-git = 'https://github.com/ejaa3/declarative/'
+version = '0.1'
+
+# for a custom builder mode:
+features = ['builder-mode']
 
 # if you're going to use it with gtk-rs, you might want to:
-features = ['gtk-rs']
+features = ['gtk-rs'] # gives a suitable `builder_mode!` macro
 ~~~
 
 To learn how to use this macro, it is best to clone this repository, read the source code of the examples in alphabetical order and run them like this:

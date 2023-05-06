@@ -4,7 +4,7 @@
 	SPDX-License-Identifier: CC-BY-SA-4.0
 -->
 
-# `declarative-macros`
+# <img src="logo.svg" width="96" align="left"/> `declarative-macros`
 
 [![Matrix](https://img.shields.io/matrix/declarative-rs:matrix.org?color=6081D4&label=matrix)](https://matrix.to/#/#declarative-rs:matrix.org)
 [![REUSE status](https://api.reuse.software/badge/github.com/ejaa3/declarative)](https://api.reuse.software/info/github.com/ejaa3/declarative)
@@ -15,8 +15,8 @@ To use it, add to your Cargo.toml:
 
 ~~~ toml
 [dependencies.declarative]
-git = 'https://github.com/ejaa3/declarative/'
 package = 'declarative-macros'
+version = '0.1'
 
 # for a custom builder mode:
 features = ['builder-mode']
@@ -26,8 +26,8 @@ features = ['builder-mode']
 
 Licensed under either of
 
-* Apache License, Version 2.0 ([Apache-2.0.txt](../LICENSES/Apache-2.0.txt) or http://www.apache.org/licenses/LICENSE-2.0)
-* MIT license ([MIT.txt](../LICENSES/MIT.txt) or http://opensource.org/licenses/MIT)
+* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+* MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
 at your option.
 
