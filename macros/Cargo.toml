@@ -19,7 +19,7 @@ proc-macro = true
 [dependencies]
 proc-macro2 = '1'
 quote = '1'
-syn = { version = '2', default-features = false, features = ['parsing', 'visit-mut'] }
+syn = { version = '2', features = ['full', 'visit-mut'] }
 
 [features]
 builder-mode = []
