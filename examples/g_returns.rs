@@ -7,6 +7,19 @@
 use declarative::builder_mode;
 use gtk::{glib, prelude::*};
 
+// two small extensions for demo purposes:
+
+fn inner_extension(page: &gtk::StackPage) {
+	page.set_name("fourth_name");
+	page.set_title("Fourth");
+}
+
+fn outer_extension(stack: &gtk::Stack, name: &str, title: &str) -> gtk::Label {
+	let label = gtk::Label::default();
+	stack.add_titled(&label, Some(name), title);
+	label
+}
+
 #[declarative::view {
 	gtk::ApplicationWindow window !{
 		application: app
@@ -17,8 +30,12 @@ use gtk::{glib, prelude::*};
 		gtk::Box #child(&#) {
 			gtk::StackSidebar #append(&#) { set_stack: &stack }
 			
-			gtk::Stack stack #append(&#) {
-				connect_visible_child_notify: move |_| send![() => sender]
+			gtk::Stack stack #append(&#) !{
+				hexpand: true
+				margin_bottom: 12
+				margin_end: 12
+				margin_start: 12
+				margin_top: 12 #..
 				
 				// some methods return something (in this case a `BindingBuilder`):
 				bind_property: "visible-child-name", &window, "title" // separate arguments with comma
@@ -31,7 +48,7 @@ use gtk::{glib, prelude::*};
 					
 					// the method of this interpolation returns a `gtk::StackPage`:
 					#add_titled(&#, None, "First")
-						// in this case you edit the return with 'back inside the scope,
+						// in this case you edit the return with 'back within the scope,
 						// and also give it a variable name and make it mutable as well:
 						'back mut returned_page { set_name: "first_name" }
 				}
@@ -41,51 +58,42 @@ use gtk::{glib, prelude::*};
 				
 				// the above is equivalent to:
 				add_child: &gtk::Label::new(Some("As an assignment"))
-				'back { set_name: "third_name"; set_title: "Third" }
+					'back { set_name: "third_name"; set_title: "Third" }
 				
 				gtk::Label !{
 					#add_child(&#) 'back {
-						set_name: "fourth_name"
-						'bind! set_title: &format!("Changes: {changes}")
+						@inner_extension(&#) // you can extend inside 'back
+						'bind set_title: &format!("Changes: {changes}")
 					}
 					label: "'back supports reactivity!"
 				}
+				
+				@outer_extension(&#, "fifth_name", "Fifth") 'back { set_label: "From an extension" }
+				
+				@outer_extension(&#, "sixth_name", "Sixth") 'back {
+					'bind set_label: &format!("Changes (from an extension): {changes}")
+				}
+				
+				'binding update_view = move |changes: u8| bindings!()
+				
+				connect_visible_child_notify: move |_| {
+					changes.set(changes.get().wrapping_add(1));
+					update_view(changes.get())
+				}
+				
+				// it is possible that in the future 'back may also destructure, or call a
+				// returned functional, or assign a returned mutable reference, and so on
 			}
-			
-			'binding update_view = move |changes: u8| bindings!()
 		}
-		// it is possible that in the future 'back may also destructure, or call a
-		// returned functional, or assign a returned mutable reference, and so on
 	}
 }]
 
-fn window(app: &gtk::Application) -> gtk::ApplicationWindow {
-	let (sender, receiver) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
-	let mut changes: u8 = 0;
-	
-	expand_view_here! { }
-	
-	receiver.attach(None, move |_| {
-		changes = changes.wrapping_add(1);
-		update_view(changes);
-		glib::Continue(true)
-	});
-	
-	window
-}
-
 fn main() -> glib::ExitCode {
 	let app = gtk::Application::default();
-	app.connect_activate(move |app| window(app).present());
+	app.connect_activate(move |app| {
+		let changes = std::cell::Cell::new(0_u8);
+		expand_view_here! { }
+		window.present()
+	});
 	app.run()
 }
-
-macro_rules! send {
-	($expr:expr => $sender:ident) => {
-		$sender.send($expr).unwrap_or_else(
-			move |error| glib::g_critical!("g_returns", "{error}")
-		)
-	};
-}
-
-use send;

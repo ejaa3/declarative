@@ -64,12 +64,15 @@ pub fn block(stream: TokenStream) -> TokenStream {
 	expand(syn::parse_macro_input!(stream)).into()
 }
 
-struct Visit { name: &'static str, stream: TokenStream2 }
+struct Visitor { name: &'static str, stream: TokenStream2 }
 
-impl VisitMut for Visit {
+impl VisitMut for Visitor {
 	fn visit_expr_mut(&mut self, node: &mut syn::Expr) {
+		if self.name.is_empty() { return }
+		
 		if let syn::Expr::Macro(mac) = node {
 			if mac.mac.path.is_ident(self.name) {
+				self.name = "";
 				let stream = &self.stream;
 				return *node = syn::Expr::Verbatim(syn::parse_quote![{#stream}]);
 			}
@@ -77,8 +80,11 @@ impl VisitMut for Visit {
 		syn::visit_mut::visit_expr_mut(self, node);
 	}
 	fn visit_stmt_mut(&mut self, node: &mut syn::Stmt) {
+		if self.name.is_empty() { return }
+		
 		if let syn::Stmt::Macro(mac) = node {
 			if mac.mac.path.is_ident(self.name) {
+				self.name = "";
 				let stream = &self.stream;
 				return *node = syn::Stmt::Expr(
 					syn::Expr::Verbatim(syn::parse_quote![#stream]), None
@@ -109,7 +115,13 @@ pub fn view(stream: TokenStream, code: TokenStream) -> TokenStream {
 	let stream = expand(syn::parse_macro_input!(stream));
 	let syntax_tree = &mut syn::parse2(code.into()).unwrap();
 	
-	Visit { name: "expand_view_here", stream }.visit_file_mut(syntax_tree);
+	let mut visitor = Visitor { name: "expand_view_here", stream };
+	visitor.visit_file_mut(syntax_tree);
+	
+	if !visitor.name.is_empty() {
+		panic!("The view must be consumed with the pseudo-macro `expand_view_here!`")
+	}
+	
 	quote![#syntax_tree].into()
 }
 

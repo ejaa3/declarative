@@ -114,10 +114,10 @@ fn window(app: &gtk::Application) -> gtk::ApplicationWindow {
 	window
 }
 
-fn main() {
+fn main() -> glib::ExitCode {
 	let app = gtk::Application::default();
 	app.connect_activate(move |app| window(app).present());
-	std::process::exit(app.run().value())
+	app.run()
 }
 
 macro_rules! send {

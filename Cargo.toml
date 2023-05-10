@@ -12,10 +12,10 @@ edition     = '2021'
 keywords    = ['GUI', 'macro', 'reactive', 'view']
 license     = 'Apache-2.0 OR MIT'
 repository  = 'https://github.com/ejaa3/declarative/'
-version     = '0.1.0'
+version     = '0.1.1'
 
 [package]
-exclude     = ['/.github', '/.gitignore', '/examples']
+include     = ['Cargo.toml', '/LICENSES', 'README.md', '/src']
 name        = 'declarative'
 authors     = { workspace = true }
 categories  = { workspace = true }

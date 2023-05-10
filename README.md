@@ -35,6 +35,13 @@ https://gtk-rs.org/gtk4-rs/stable/latest/book/
 
 [gtk-rs]: https://gtk-rs.org
 
+You may need to tell rust-analyzer that the examples depend on the `gtk-rs` feature to avoid false positives.
+For example, with VS Code it is configured with the following JSON:
+
+~~~ JSON
+{ "rust-analyzer.cargo.features": ["gtk-rs"] }
+~~~
+
 ## Application example
 
 In the following I manually implement the Elm pattern. The macro does not require any specific pattern.
@@ -127,7 +134,7 @@ use send;
 To execute, run:
 
 ~~~ bash
-cargo run --features gtk-rs --example readme
+cargo run --features gtk-rs --example y_readme
 ~~~
 
 ## License

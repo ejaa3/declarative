@@ -11,7 +11,7 @@ use crate::{property, content};
 pub(crate) enum Inner<T> {
 	If    (Vec<syn::Attribute>, Vec<If<T>>),
 	Match (Vec<syn::Attribute>, Box<Match<T>>),
-	Prop  (T),
+	Prop  (Box<T>),
 }
 
 impl<T: Expand> crate::ParseReactive for Inner<T> {
@@ -29,7 +29,7 @@ impl<T: Expand> crate::ParseReactive for Inner<T> {
 			let attrs = attrs.map_or_else(map, Result::Ok)?;
 			Ok(Inner::Match(attrs, Match::parse(input, None, reactive)?.into()))
 		} else {
-			Ok(Inner::Prop(T::parse(input, attrs, reactive)?))
+			Ok(Inner::Prop(T::parse(input, attrs, reactive)?.into()))
 		}
 	}
 }

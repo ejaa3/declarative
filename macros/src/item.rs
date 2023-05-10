@@ -80,7 +80,7 @@ struct Annex {
 
 enum AnnexMode {
 	  Field(syn::token::Brace),
-	Closure(syn::token::Bracket),
+	FnField(syn::token::Bracket),
 	 Method(syn::token::Paren),
 }
 
@@ -103,29 +103,29 @@ fn parse_annex(
 		(AnnexMode::Field(syn::braced!(braces in input)), braces)
 	} else {
 		let brackets;
-		(AnnexMode::Closure(syn::bracketed!(brackets in input)), brackets)
+		(AnnexMode::FnField(syn::bracketed!(brackets in input)), brackets)
 	};
 	
 	let tokens = buffer.step(|cursor| {
 		let mut rest = *cursor;
 		let mut stream = TokenStream::new();
 		
-		find_pound(&mut rest, &mut stream, &mut name.clone())
+		find_pound(&mut rest, &mut stream, &[&name])
 			.then(|| (stream, syn::buffer::Cursor::empty()))
 			.ok_or_else(|| cursor.error("no `#` was found after this point"))
 	})?;
 	
-	let back = if let AnnexMode::Closure(_) | AnnexMode::Method(_) = &mode {
+	let back = if let AnnexMode::FnField(_) | AnnexMode::Method(_) = &mode {
 		property::parse_back(input, reactive)?
 	} else { None };
 	
 	Ok(Annex { annex, by_ref, mut0, mode, tokens, back }.into())
 }
 
-fn find_pound(
+pub(crate) fn find_pound(
 	 rest: &mut syn::buffer::Cursor,
 	outer: &mut TokenStream,
-	 name: &mut syn::Ident,
+	 name: &[&syn::Ident],
 ) -> bool {
 	while let Some((tt, next)) = rest.token_tree() {
 		match tt {
@@ -154,8 +154,8 @@ fn find_pound(
 						continue;
 					}
 				}
-				name.set_span(punct.span());
-				outer.extend(quote![#name]);
+				let name = crate::span_to(name, punct.span());
+				outer.extend(quote![#(#name)*]);
 				outer.extend(next.token_stream());
 				return true
 			} else { outer.extend(quote![#punct]); *rest = next; }
@@ -213,7 +213,7 @@ pub(crate) fn expand(
 		let right = match mode {
 			// WARNING #annex must be a field name:
 			AnnexMode::Field   (_) => quote![ #(#assignee.)* #annex = {#tokens}],
-			AnnexMode::Closure (_) => quote![(#(#assignee.)* #annex)  (#tokens)],
+			AnnexMode::FnField (_) => quote![(#(#assignee.)* #annex)  (#tokens)],
 			
 			AnnexMode::Method(paren) => if annex.segments.len() == 1 {
 				quote![#(#assignee.)* #annex(#tokens)]
@@ -227,7 +227,7 @@ pub(crate) fn expand(
 		settings.extend(match mode {
 			// WARNING #annex must be a field name:
 			AnnexMode::Field   (_) => quote![#(#attrs)* #(#assignee.)* #annex = {#tokens};],
-			AnnexMode::Closure (_) => quote![#(#attrs)* (#(#assignee.)* #annex) (#tokens);],
+			AnnexMode::FnField (_) => quote![#(#attrs)* (#(#assignee.)* #annex) (#tokens);],
 			
 			AnnexMode::Method(paren) => if annex.segments.len() == 1 {
 				quote![#(#attrs)* #(#assignee.)* #annex(#tokens);]

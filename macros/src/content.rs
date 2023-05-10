@@ -7,10 +7,11 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::visit_mut::VisitMut;
-use crate::{conditional as cond, item, property as prop, Visit};
+use crate::{conditional as cond, item, property as prop, Visitor};
 
 pub(crate) enum Content {
-	Prop  (Box<prop::Prop>),
+	Property  (Box<prop::Prop>),
+	Extension (Box<Extension>),
 	Built {
 		  token: syn::Token![#],
 		    end: Option<syn::Token![.]>,
@@ -29,6 +30,13 @@ pub(crate) enum Content {
 	},
 	
 	Binding (Box<Expr>),
+}
+
+pub(crate) struct Extension {
+	 attrs: Vec<syn::Attribute>,
+	   ext: syn::Path,
+	tokens: syn::buffer::TokenBuffer,
+	  back: Option<Box<prop::Back>>,
 }
 
 pub(crate) enum Binding {
@@ -75,6 +83,12 @@ impl crate::ParseReactive for Content {
 			return Ok(Content::Inner(
 				cond::Inner::parse(input, Some(attrs), false)?.into()
 			))
+		} else if input.parse::<syn::Token![@]>().is_ok() {
+			let ext = input.parse()?;
+			let parens; syn::parenthesized!(parens in input);
+			let tokens = syn::buffer::TokenBuffer::new2(parens.parse()?);
+			let back = prop::parse_back(input, reactive)?;
+			return Ok(Content::Extension(Extension { attrs, ext, tokens, back }.into()))
 		} else {
 			return Ok({
 				let ahead = input.fork();
@@ -84,7 +98,7 @@ impl crate::ParseReactive for Content {
 				|| ahead.peek(syn::Token![;])
 				|| ahead.peek(syn::Token![=])
 				|| ahead.peek(syn::Token![&]) {
-					Content::Prop(prop::Prop::parse(input, Some(attrs), reactive)?.into())
+					Content::Property(prop::Prop::parse(input, Some(attrs), reactive)?.into())
 				} else {
 					Content::Item(item::parse(input, attrs, reactive, false)?.into())
 				}
@@ -147,7 +161,7 @@ pub(crate) fn expand(
 	 builder: Option<usize>,
 ) {
 	match content {
-		Content::Prop(prop) => {
+		Content::Property(prop) => {
 			let Some(expr) = prop::expand(
 				*prop, objects, builders, settings, bindings, pattrs, name, builder
 			) else { return };
@@ -159,6 +173,25 @@ pub(crate) fn expand(
 			
 			#[cfg(not(feature = "builder-mode"))]
 			builders[index].extend(expr);
+		}
+		Content::Extension(extension) => {
+			let Extension { mut attrs, ext, tokens, back } = *extension;
+			
+			let mut rest = tokens.begin();
+			let mut stream = TokenStream::new();
+			
+			if item::find_pound(&mut rest, &mut stream, name) {
+				if let Some(back) = back {
+					crate::extend_attributes(&mut attrs, pattrs);
+					prop::expand_back(
+						*back, objects, builders, settings, bindings, attrs, quote![#ext(#stream)]
+					)
+				} else { settings.extend(quote![#(#pattrs)* #(#attrs)* #ext(#stream);]) }
+			} else {
+				objects.extend(syn::Error::new(
+					tokens.begin().span(), "no `#` was found after this point"
+				).into_compile_error())
+			}
 		}
 		Content::Built { token, end: _end, content } => {
 			let Some(_index) = builder else {
@@ -241,7 +274,7 @@ pub(crate) fn expand(
 			let Expr { attrs, mut0, name, equal, mut expr } = *expr;
 			let stream = std::mem::take(bindings);
 			
-			Visit { name: "bindings", stream }.visit_expr_mut(&mut expr);
+			Visitor { name: "bindings", stream }.visit_expr_mut(&mut expr);
 			
 			settings.extend(quote![#(#pattrs)* #(#attrs)* let #mut0 #name #equal #expr;])
 		}

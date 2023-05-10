@@ -19,9 +19,16 @@ fn main() -> glib::ExitCode {
 	builder_mode()
 }
 
+fn add_five(string: &mut String) {
+	declarative::block! {
+		// to edit an argument or variable before expansion, use `ref`:
+		ref string { push_str: "5, " }
+	}
+}
+
 #[declarative::view { // outer syntax
 	// writing only the type constructs it with `Type::default()`:
-	String mut my_string { // with `mut` you can mutate here
+	String mut main_string { // with `mut` you can mutate here
 		
 		// this is a method call:
 		push_str: &first // `first` is another item (see below)
@@ -35,14 +42,14 @@ fn main() -> glib::ExitCode {
 			// in the `(arguments)` the first match of # will be replaced by the item name;
 			// if you need a #, you can avoid the replacement by typing ## (if there was a replacement, #)
 			
-			push_str: "Second, "
+			push_str: "2, "
 		}
 		
 		// also valid to interpolate before the brace:
-		String mut #push_str(&#) { push_str: "Third, " }
+		String mut #push_str(&#) { push_str: "3, " }
 		
 		String mut { // a full path can also be used (useful for disambiguating traits):
-			String::push_str &mut: "Fourth, " // delete `&mut` and you will have a nice error
+			String::push_str &mut: "4, " // delete `&mut` and you will have a nice error
 			// `&mut:` because `push_str()` requires `&mut self` as the first argument
 			
 			// if you delete `&mut` here you will get an error in the whole macro:
@@ -50,28 +57,51 @@ fn main() -> glib::ExitCode {
 			// I have not been able to display the error near the parenthesis (among others)
 		}
 		
-		// to interpolate and edit an argument or variable before view expansion, use `ref`:
-		ref pre_view #push_str(&#) { push_str: "Sixth, " }
+		// @extensions are useful for sharing a view edit:
+		@add_five(&mut #) // remember the `add_five()` function, after `main()`
+		// unlike an interpolation, it cannot go before a brace
 		
-		// by coincidence we can do the same with `first`:
-		ref first #push_str(&#) { // (this is also a composition)
+		// you can also compose with `ref`:
+		ref pre_view #push_str(&#) { push_str: "6, " }
+		
+		// by coincidence we can use `ref` with `first` although
+		// the real purpose of `ref` is what lines 24 and 64 say:
+		ref first #push_str(&#) {
 			clear; // you can call a method without arguments with semicolon
-			push_str: "Fifth, "
+			push_str: "7, "
 		}
 	}
 	
 	// you can add more items here:
-	String::from("First, ") mut first { }
+	String::from("1, ") mut first { }
+}]
+
+#[declarative::view { // a second view
+	String::from("9, ") mut end {
+		push_str: {
+			// the pseudo-macro `expand_view_here!` can only consume one view:
+			expand_view_here! { } // here the third view is expanded (reason below)
+			ten
+		}
+	}
+}]
+
+#[declarative::view { // a third view
+	str::as_ref("10") ten { } // could be "10" without `str::as_ref()`
 }]
 
 fn outer() {
 	println!("[OUTER]");
 	
 	let mut pre_view = String::new();
-	expand_view_here! { } // here we insert the string items
-	my_string.push_str("End;"); // logically you can edit after view
+	expand_view_here! { } // here we put the string items of the first view
+	main_string.push_str("8,"); // logically you can edit after view
 	
-	println!("{my_string}");
+	// here we expand the second view, which also expands and consumes the...
+	expand_view_here! { } // third view due to an internal `expand_view_here!`
+	// the first view is consumed first, and the last is consumed last
+	
+	println!("{main_string} {end}");
 }
 
 // you can use the “builder mode” with the exclamation mark before the brace,
@@ -87,19 +117,19 @@ fn outer() {
 macro_rules! builder_mode {
 	// when only a type is specified and the mode is
 	// terminated without an auto-invoked last method (with #.)
-	(.$type:ty => $($token:tt)+) => { <$type>::builder() $($token)+ };
+	(.$type:ty => $($token:tt)*) => { <$type>::builder() $($token)* };
 	
 	// when only a type is specified and the mode is
 	// terminated with an auto-invoked last method (with #..)
-	( $type:ty => $($token:tt)+) => { <$type>::builder() $($token)+.build() };
+	( $type:ty => $($token:tt)*) => { <$type>::builder() $($token)*.build() };
 	
 	// when an expression is specified and the mode is
 	// terminated without an auto-invoked last method (with #.)
-	(.$($expr:expr)+) => { $($expr)+ };
+	(.$expr:expr) => { $expr };
 	
 	// when an expression is specified and the mode is
 	// terminated with an auto-invoked last method (with #..)
-	( $($expr:expr)+) => { $($expr)+.build() };
+	( $expr:expr) => { $expr.build() };
 }
 
 // let's exemplify the second and third case:
