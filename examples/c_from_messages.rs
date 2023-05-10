@@ -46,7 +46,7 @@ macro_rules! send { // a macro to log send errors
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
-			margin_end: 6 #..
+			margin_end: 6 #:
 			
 			gtk::Label my_label #attach(&#, 0, 0, 2, 1) {
 				set_hexpand: true

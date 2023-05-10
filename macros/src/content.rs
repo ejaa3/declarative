@@ -13,8 +13,9 @@ pub(crate) enum Content {
 	Property  (Box<prop::Prop>),
 	Extension (Box<Extension>),
 	Built {
-		  token: syn::Token![#],
-		    end: Option<syn::Token![.]>,
+		 object: bool,
+		   span: proc_macro2::Span,
+		   semi: Option<syn::Token![;]>,
 		content: Vec<Content>,
 	},
 	
@@ -58,12 +59,21 @@ impl crate::ParseReactive for Content {
 	         attrs: Option<Vec<syn::Attribute>>,
 	      reactive: bool,
 	) -> syn::Result<Self> {
-		if input.peek(syn::Token![#]) && !input.peek2(syn::token::Bracket) {
-			let token = input.parse()?;
-			let mut end = Some(input.parse::<syn::Token![.]>()?);
-			if input.parse::<syn::Token![.]>().is_ok() { end = None; };
+		if (input.peek (syn::Token![#]) || input.peek (syn::Token![@]))
+		&& (input.peek2(syn::Token![:]) || input.peek2(syn::Token![;])) {
+			let (object, span) =
+				if let Ok(pount) = input.parse::<syn::Token![#]>() {
+					(false, pount.span)
+				} else {
+					let at: syn::Token![@] = input.parse()?;
+					(true, at.span)
+				};
+			
+			let semi: Option<syn::Token![;]> = input.parse()?;
+			if semi.is_none() { input.parse::<syn::Token![:]>()?; }
+			
 			let content = parse_vec(input, reactive)?;
-			return Ok(Content::Built { token, end, content })
+			return Ok(Content::Built { object, span, semi, content })
 		}
 		
 		let attrs = attrs.map_or_else(|| input.call(syn::Attribute::parse_outer), Result::Ok)?;
@@ -176,11 +186,9 @@ pub(crate) fn expand(
 		}
 		Content::Extension(extension) => {
 			let Extension { mut attrs, ext, tokens, back } = *extension;
-			
-			let mut rest = tokens.begin();
 			let mut stream = TokenStream::new();
 			
-			if item::find_pound(&mut rest, &mut stream, name) {
+			if item::find_pound(&mut tokens.begin(), &mut stream, name) {
 				if let Some(back) = back {
 					crate::extend_attributes(&mut attrs, pattrs);
 					prop::expand_back(
@@ -193,14 +201,19 @@ pub(crate) fn expand(
 				).into_compile_error())
 			}
 		}
-		Content::Built { token, end: _end, content } => {
-			let Some(_index) = builder else {
-				let error = syn::Error::new(token.span, "only allowed in builder mode");
+		Content::Built { object, span, semi: _semi, content } => {
+			let Some(index) = builder else {
+				let error = syn::Error::new(span, "only allowed in builder mode");
 				return objects.extend(error.into_compile_error())
 			};
 			
 			#[cfg(feature = "builder-mode")]
-			{ builders[_index].2 = _end; }
+			{ builders[index].2 = _semi; }
+			
+			if object {
+				let builder = builders.remove(index);
+				objects.extend(quote![#builder;]);
+			}
 			
 			for content in content { expand(
 				content, objects, builders, settings, bindings, pattrs, name, None

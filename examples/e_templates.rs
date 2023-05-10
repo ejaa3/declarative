@@ -29,7 +29,7 @@ impl std::ops::Deref for BoxTemplate {
 		margin_top: 6
 		margin_bottom: 6
 		margin_start: 6
-		margin_end: 6 #..
+		margin_end: 6 #:
 		
 		gtk::Label label #append(&#) { } // I want to publish this widget
 		
@@ -71,7 +71,7 @@ fn update_state(state: &mut State, msg: Msg) {
 		
 		gtk::Box #child(&#) !{
 			orientation: gtk::Orientation::Vertical
-			spacing: 6 #..
+			spacing: 6 #:
 			
 			// `BoxTemplate` is not a widget but its `root` field is (#interpolate well):
 			BoxTemplate::new(&sender1) #append(&#.root) {

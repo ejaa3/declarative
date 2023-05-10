@@ -32,7 +32,7 @@ fn update_state(state: &mut State, msg: Msg) {
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
-			margin_end: 6 #..
+			margin_end: 6 #:
 			
 			gtk::Label #append(&#) {
 				'bind! set_label: &format!("The count is: {}", state.count)

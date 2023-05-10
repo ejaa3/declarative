@@ -54,7 +54,7 @@ impl<Updater> View<Updater> where Updater: Fn(cell::Ref<State>) {
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
-			margin_end: 6 #..
+			margin_end: 6 #:
 			
 			gtk::Label my_label #attach(&#, 0, 0, 2, 1) !{
 				hexpand: true

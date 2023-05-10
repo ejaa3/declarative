@@ -35,7 +35,7 @@ fn outer_extension(stack: &gtk::Stack, name: &str, title: &str) -> gtk::Label {
 				margin_bottom: 12
 				margin_end: 12
 				margin_start: 12
-				margin_top: 12 #..
+				margin_top: 12 #:
 				
 				// some methods return something (in this case a `BindingBuilder`):
 				bind_property: "visible-child-name", &window, "title" // separate arguments with comma

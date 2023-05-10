@@ -87,6 +87,12 @@ impl Besides {
 			/// inner property
 			append: None
 			
+			/// inner extension 1
+			@Besides::method(&#)
+			
+			/// inner extension 2
+			@Besides::method_generic_arg::<Option<()>>(&#, Some(()))
+			
 			/// bind colon
 			'bind: if "this".is_empty() {
 				append: None

@@ -141,7 +141,7 @@ fn count() -> String {
 type Builder = TokenStream2;
 
 #[cfg(feature = "builder-mode")]
-struct Builder(TokenStream2, TokenStream2, Option<syn::Token![.]>);
+struct Builder(TokenStream2, TokenStream2, Option<syn::Token![;]>);
 
 #[cfg(feature = "builder-mode")]
 impl quote::ToTokens for Builder {

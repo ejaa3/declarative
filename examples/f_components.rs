@@ -23,7 +23,7 @@ fn update_state(state: &mut State, msg: Msg) {
 #[declarative::view { // component factory
 	gtk::Box root !{
 		orientation: gtk::Orientation::Vertical
-		spacing: 6 #..
+		spacing: 6 #:
 		
 		gtk::Label #append(&#) !{
 			label: &format!("This is the {nth} component")
@@ -78,7 +78,7 @@ fn component(nth: &'static str, parent: &glib::Sender<&'static str>) -> gtk::Box
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
-			margin_end: 6 #..
+			margin_end: 6 #:
 			
 			// you can call the function here:
 			component("First", &sender) #append(&#) { /* edit */ }

@@ -116,19 +116,19 @@ fn outer() {
 
 macro_rules! builder_mode {
 	// when only a type is specified and the mode is
-	// terminated without an auto-invoked last method (with #.)
-	(.$type:ty => $($token:tt)*) => { <$type>::builder() $($token)* };
+	// terminated without an auto-invoked last method (with #; or @;)
+	(;$type:ty => $($token:tt)*) => { <$type>::builder() $($token)* };
 	
 	// when only a type is specified and the mode is
-	// terminated with an auto-invoked last method (with #..)
+	// terminated with an auto-invoked last method (with #: or @:)
 	( $type:ty => $($token:tt)*) => { <$type>::builder() $($token)*.build() };
 	
 	// when an expression is specified and the mode is
-	// terminated without an auto-invoked last method (with #.)
-	(.$expr:expr) => { $expr };
+	// terminated without an auto-invoked last method (with #; or @;)
+	(;$expr:expr) => { $expr };
 	
 	// when an expression is specified and the mode is
-	// terminated with an auto-invoked last method (with #..)
+	// terminated with an auto-invoked last method (with #: or @:)
 	( $expr:expr) => { $expr.build() };
 }
 
@@ -152,12 +152,12 @@ macro_rules! builder_mode {
 			// for ease, interpolation is not allowed after finishing builder mode
 			#child(&#) // so we interpolate before
 			
-			build; #. // inner builder mode ends (third case)
+			build; #; // inner builder mode ends (third case)
 			// gtk-rs requires calling `build()` in most of its builders
 			
-			gtk::Button #append(&#) !{ label: "First" } // if you do not put a #. or #.., it is as if
-			gtk::Button #append(&#) !{ label: "Second" } // you had put a #.. at the end of the scope
-		} #.. // outer builder mode ends (second case)
+			gtk::Button #append(&#) !{ label: "First" } // if you do not put a `#:` or `#;`, it is as if
+			gtk::Button #append(&#) !{ label: "Second" } // you had put a `#:` at the end of the scope
+		} #: // outer builder mode ends (second case)
 		
 		present; // we show the window
 	}
@@ -168,3 +168,10 @@ fn builder_mode() -> glib::ExitCode {
 	app.connect_activate(|app| expand_view_here!());
 	app.run()
 }
+
+// builder mode expands inner items before outer items (the placement is reversed)
+//
+// if you want to place an outer item before the inner ones, you must
+// end the mode with `@:` or `@;` instead of `#:` or `#;` respectively
+//
+// this would result in not being able to interpolate child items with builder methods of the parent

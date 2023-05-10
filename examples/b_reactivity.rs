@@ -16,7 +16,7 @@ use std::cell::Cell;
 		gtk::Box #child(&#) !{
 			orientation: gtk::Orientation::Vertical
 			// semicolons are optional but good separators:
-			spacing: 6; margin_top: 6; margin_bottom: 6 #..
+			spacing: 6; margin_top: 6; margin_bottom: 6 #:
 			
 			gtk::Label #append(&#) !{
 				label: "Waiting for a change…" // 'bind does not initialize (read below)

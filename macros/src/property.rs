@@ -168,9 +168,17 @@ pub(crate) fn expand(
 	bindings: &mut TokenStream,
 	  pattrs: &[syn::Attribute],
 	assignee: &[&syn::Ident],
-	   build: Option<usize>,
+	 builder: Option<usize>,
 ) -> Option<TokenStream> {
-	if build.is_some() {
+	if builder.is_some() {
+		if !attrs.is_empty() {
+			objects.extend(syn::Error::new_spanned(
+				quote![#(#attrs)*], "cannot use attributes in builder mode"
+			).into_compile_error());
+			
+			return None
+		}
+		
 		let Mode::Method { span: _, args, back } = mode else {
 			objects.extend(syn::Error::new_spanned(
 				prop, "can only call methods in builder mode"

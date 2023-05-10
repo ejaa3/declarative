@@ -14,9 +14,9 @@ pub use declarative::{block, view};
 #[macro_export]
 /// Macro called by [block!] and [view!] macros when editing in builder mode (currently must be in scope).
 macro_rules! builder_mode {
-	(.$type:ty => $($token:tt)*) => { <$type>::builder() $($token)* };
+	(;$type:ty => $($token:tt)*) => { <$type>::builder() $($token)* };
 	( $type:ty => $($token:tt)*) => { <$type>::builder() $($token)*.build() };
-	(.$expr:expr) => { $expr };
+	(;$expr:expr) => { $expr };
 	( $expr:expr) => { $expr.build() };
 }
 
