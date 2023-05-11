@@ -119,7 +119,7 @@ pub fn view(stream: TokenStream, code: TokenStream) -> TokenStream {
 	visitor.visit_file_mut(syntax_tree);
 	
 	if !visitor.name.is_empty() {
-		panic!("The view must be consumed with the pseudo-macro `expand_view_here!`")
+		panic!("the view must be consumed with the pseudo-macro `expand_view_here!`")
 	}
 	
 	quote![#syntax_tree].into()

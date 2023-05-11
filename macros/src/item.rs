@@ -77,11 +77,7 @@ struct Annex {
 	  back: Option<Box<property::Back>>,
 }
 
-enum AnnexMode {
-	  Field (Span),
-	FnField (Span),
-	 Method (Span),
-}
+enum AnnexMode { Field (Span), FnField (Span), Method (Span) }
 
 fn parse_annex(
 	   input: syn::parse::ParseStream,
@@ -109,7 +105,7 @@ fn parse_annex(
 		let mut rest = *cursor;
 		let mut stream = TokenStream::new();
 		
-		find_pound(&mut rest, &mut stream, &[&name])
+		find_pound(&mut rest, &mut stream, &[name])
 			.then(|| (stream, syn::buffer::Cursor::empty()))
 			.ok_or_else(|| cursor.error("not a single `#` found around here"))
 	})?;

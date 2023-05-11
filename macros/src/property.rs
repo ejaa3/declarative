@@ -20,7 +20,7 @@ enum Mode {
 	Edit    (Vec<content::Content>),
 	Field   (Box<syn::Expr>),
 	Method  { span: Span, args: Vec<syn::Expr>, back: Option<Box<Back>> },
-	Closure { args: Vec<syn::Expr>, back: Option<Box<Back>> },
+	FnField { args: Vec<syn::Expr>, back: Option<Box<Back>> },
 }
 
 impl crate::ParseReactive for Prop {
@@ -71,7 +71,7 @@ impl crate::ParseReactive for Prop {
 		} else if let Ok(colon) = input.parse::<syn::Token![:]>() {
 			if input.parse::<syn::Token![=]>().is_ok() {
 				let (args, back) = invokable()?;
-				Mode::Closure { args, back }
+				Mode::FnField { args, back }
 			} else {
 				let (args, back) = invokable()?;
 				Mode::Method { span: colon.span, args, back }
@@ -79,7 +79,7 @@ impl crate::ParseReactive for Prop {
 		} else if let Ok(semi) = input.parse::<syn::Token![;]>() {
 			if input.parse::<syn::Token![;]>().is_ok() {
 				let back = parse_back(input, reactive)?;
-				Mode::Closure { args: vec![], back }
+				Mode::FnField { args: vec![], back }
 			} else {
 				let back = parse_back(input, reactive)?;
 				Mode::Method { span: semi.span, args: vec![], back }
@@ -231,7 +231,7 @@ pub(crate) fn expand(
 			let assignee = crate::span_to(assignee, span);
 			(quote![#prop(#by_ref #mut0 #(#assignee).*, #(#args),*)], back)
 		}
-		Mode::Closure { args, back } => (quote![(#(#assignee.)* #prop) (#(#args),*)], back), // WARNING #prop must be a field name
+		Mode::FnField { args, back } => (quote![(#(#assignee.)* #prop) (#(#args),*)], back), // WARNING #prop must be a field name
 	};
 	
 	let Some(back0) = back else {
