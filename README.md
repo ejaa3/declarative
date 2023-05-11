@@ -15,7 +15,7 @@ To use it, add to your Cargo.toml:
 
 ~~~ toml
 [dependencies.declarative]
-version = '0.1'
+version = '0.2'
 
 # for a custom builder mode:
 features = ['builder-mode']
@@ -78,7 +78,7 @@ fn update_state(state: &mut State, msg: Msg) {
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
-			margin_end: 6 #..
+			margin_end: 6 #:
 			
 			gtk::Label #append(&#) {
 				'bind! set_label: &format!("The count is: {}", state.count)
