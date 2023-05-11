@@ -82,11 +82,11 @@ impl crate::ParseReactive for Content {
 			match keyword.ident.to_string().as_str() {
 				"bind" | "binding" => if reactive { keyword } else {
 					Err(syn::Error::new(
-						keyword.span(), format!("cannot use {keyword} here")
+						keyword.span(), format!("cannot use {keyword} in non-reactive contexts")
 					))?
 				}
 				_ => return Err(syn::Error::new(
-					keyword.span(), format!("unknown keyword {keyword}")
+					keyword.span(), format!("expected 'bind or 'binding, found {keyword}")
 				))
 			}
 		} else if input.peek(syn::Token![if]) || input.peek(syn::Token![match]) {
@@ -119,8 +119,8 @@ impl crate::ParseReactive for Content {
 			"bind" => if input.parse::<syn::Token![:]>().is_ok() {
 				Ok(Content::BindColon {
 					attrs,
-					if0: input.parse::<syn::Token![if]>()?,
-					cond: input.parse()?,
+					  if0: input.parse::<syn::Token![if]>()?,
+					 cond: input.parse()?,
 					props: crate::parse_vec(input, false)?,
 				})
 			} else {
@@ -143,7 +143,7 @@ impl crate::ParseReactive for Content {
 				 expr: input.parse()?
 			}.into())),
 			
-			_ => Err(input.error("expected 'bind, 'bind_only, 'bind_now or 'binding")),
+			_ => unreachable!(),
 		}
 	}
 }
@@ -197,7 +197,7 @@ pub(crate) fn expand(
 				} else { settings.extend(quote![#(#pattrs)* #(#attrs)* #ext(#stream);]) }
 			} else {
 				objects.extend(syn::Error::new(
-					tokens.begin().span(), "no `#` was found after this point"
+					tokens.begin().span(), "not a single `#` found around here"
 				).into_compile_error())
 			}
 		}

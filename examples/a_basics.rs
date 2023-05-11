@@ -52,9 +52,9 @@ fn add_five(string: &mut String) {
 			String::push_str &mut: "4, " // delete `&mut` and you will have a nice error
 			// `&mut:` because `push_str()` requires `&mut self` as the first argument
 			
-			// if you delete `&mut` here you will get an error in the whole macro:
+			// if you delete `&mut` here, you will get an error on the first token inside the parentheses:
 			#String::push_str &mut (&#) // you can interpolate anywhere in this scope
-			// I have not been able to display the error near the parenthesis (among others)
+			// I have not been able to display the error in the parentheses
 		}
 		
 		// @extensions are useful for sharing a view edit:

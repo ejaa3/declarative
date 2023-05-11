@@ -60,8 +60,12 @@ impl crate::ParseReactive for Prop {
 		}
 		
 		let mode = if input.parse::<syn::Token![=>]>().is_ok() {
-			let braces; syn::braced!(braces in input);
-			Mode::Edit(content::parse_vec(&braces, reactive)?)
+			if input.peek(syn::token::Brace) {
+				let braces; syn::braced!(braces in input);
+				Mode::Edit(content::parse_vec(&braces, reactive)?)
+			} else {
+				Mode::Edit(vec![crate::ParseReactive::parse(input, None, reactive)?])
+			}
 		} else if input.parse::<syn::Token![=]>().is_ok() {
 			Mode::Field(input.parse()?)
 		} else if let Ok(colon) = input.parse::<syn::Token![:]>() {

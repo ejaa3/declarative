@@ -4,9 +4,8 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use proc_macro2::{Span, TokenStream, TokenTree};
 use quote::quote;
-use syn::spanned::Spanned;
 use crate::{content, property};
 
 pub(crate) struct Item {
@@ -79,9 +78,9 @@ struct Annex {
 }
 
 enum AnnexMode {
-	  Field(syn::token::Brace),
-	FnField(syn::token::Bracket),
-	 Method(syn::token::Paren),
+	  Field (Span),
+	FnField (Span),
+	 Method (Span),
 }
 
 fn parse_annex(
@@ -96,14 +95,14 @@ fn parse_annex(
 	} else { (None, None) };
 	
 	let (mode, buffer) = if input.peek(syn::token::Paren) {
-		let parens;
-		(AnnexMode::Method(syn::parenthesized!(parens in input)), parens)
+		let parens; syn::parenthesized!(parens in input);
+		(AnnexMode::Method(parens.span()), parens)
 	} else if input.peek(syn::token::Brace) {
-		let braces;
-		(AnnexMode::Field(syn::braced!(braces in input)), braces)
+		let braces; syn::braced!(braces in input);
+		(AnnexMode::Field(braces.span()), braces)
 	} else {
-		let brackets;
-		(AnnexMode::FnField(syn::bracketed!(brackets in input)), brackets)
+		let brackets; syn::bracketed!(brackets in input);
+		(AnnexMode::FnField(brackets.span()), brackets)
 	};
 	
 	let tokens = buffer.step(|cursor| {
@@ -112,7 +111,7 @@ fn parse_annex(
 		
 		find_pound(&mut rest, &mut stream, &[&name])
 			.then(|| (stream, syn::buffer::Cursor::empty()))
-			.ok_or_else(|| cursor.error("no `#` was found after this point"))
+			.ok_or_else(|| cursor.error("not a single `#` found around here"))
 	})?;
 	
 	let back = if let AnnexMode::FnField(_) | AnnexMode::Method(_) = &mode {
@@ -135,12 +134,9 @@ pub(crate) fn find_pound(
 				let mut inner = TokenStream::new();
 				let found = find_pound(&mut into, &mut inner, name);
 				
-				outer.extend(match delimiter {
-					Delimiter::Parenthesis => quote![(#inner)],
-					Delimiter::Brace => quote![{#inner}],
-					Delimiter::Bracket => quote![[#inner]],
-					Delimiter::None => quote![#inner],
-				});
+				let mut copy = proc_macro2::Group::new(delimiter, inner);
+				copy.set_span(group.span());
+				outer.extend(quote![#copy]);
 				
 				*rest = next;
 				if found { outer.extend(next.token_stream()); return true }
@@ -155,7 +151,7 @@ pub(crate) fn find_pound(
 					}
 				}
 				let name = crate::span_to(name, punct.span());
-				outer.extend(quote![#(#name)*]);
+				outer.extend(quote![#(#name).*]);
 				outer.extend(next.token_stream());
 				return true
 			} else { outer.extend(quote![#punct]); *rest = next; }
@@ -179,7 +175,7 @@ pub(crate) fn expand(
 ) {
 	crate::extend_attributes(&mut attrs, pattrs);
 	
-	let new_builder = object.map(|object| crate::expand_object(
+	let new_builder = object.as_ref().map(|object| crate::expand_object(
 		object, objects, builders, &attrs, mut0, &name, build.is_some()
 	)).unwrap_or(None);
 	
@@ -189,9 +185,9 @@ pub(crate) fn expand(
 	
 	let Some(assignee) = assignee else { return };
 	
-	let Some(annex) = annex else { return objects.extend(
-		syn::Error::new(name.span(), "missing #interpolation").into_compile_error()
-	) };
+	let Some(annex) = annex else { return objects.extend(syn::Error::new_spanned(
+		quote![#object #mut0 #name #build], "missing #interpolation"
+	).into_compile_error()) };
 	
 	let Annex { annex, by_ref, mut0, mode, tokens, back } = *annex;
 	
@@ -215,10 +211,10 @@ pub(crate) fn expand(
 			AnnexMode::Field   (_) => quote![ #(#assignee.)* #annex = {#tokens}],
 			AnnexMode::FnField (_) => quote![(#(#assignee.)* #annex)  (#tokens)],
 			
-			AnnexMode::Method(paren) => if annex.segments.len() == 1 {
+			AnnexMode::Method(span) => if annex.segments.len() == 1 {
 				quote![#(#assignee.)* #annex(#tokens)]
-			} else { // BUG span_to does not seem to work here
-				let assignee = crate::span_to(assignee, paren.span.span());
+			} else {
+				let assignee = crate::span_to(assignee, span);
 				quote![#annex(#by_ref #mut0 #(#assignee).*, #tokens)]
 			}
 		};
@@ -229,10 +225,10 @@ pub(crate) fn expand(
 			AnnexMode::Field   (_) => quote![#(#attrs)* #(#assignee.)* #annex = {#tokens};],
 			AnnexMode::FnField (_) => quote![#(#attrs)* (#(#assignee.)* #annex) (#tokens);],
 			
-			AnnexMode::Method(paren) => if annex.segments.len() == 1 {
+			AnnexMode::Method(span) => if annex.segments.len() == 1 {
 				quote![#(#attrs)* #(#assignee.)* #annex(#tokens);]
-			} else { // BUG span_to does not seem to work here
-				let assignee = crate::span_to(assignee, paren.span.span());
+			} else {
+				let assignee = crate::span_to(assignee, span);
 				quote![#(#attrs)* #annex(#by_ref #mut0 #(#assignee).*, #tokens);]
 			}
 		});

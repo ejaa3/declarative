@@ -15,7 +15,7 @@ mod property;
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{parse::{Parse, ParseStream}, visit_mut::VisitMut};
 
 struct Roots(Vec<item::Item>);
@@ -144,7 +144,7 @@ type Builder = TokenStream2;
 struct Builder(TokenStream2, TokenStream2, Option<syn::Token![;]>);
 
 #[cfg(feature = "builder-mode")]
-impl quote::ToTokens for Builder {
+impl ToTokens for Builder {
 	fn to_tokens(&self, tokens: &mut TokenStream2) {
 		let Builder(left, right, end) = self;
 		tokens.extend(quote![#left builder_mode!(#end #right)])
@@ -152,6 +152,15 @@ impl quote::ToTokens for Builder {
 }
 
 enum Object { Expr(Box<syn::Expr>), Type(Box<syn::TypePath>) }
+
+impl ToTokens for Object {
+	fn to_tokens(&self, tokens: &mut TokenStream2) {
+		match self {
+			Object::Expr(expr) => expr.to_tokens(tokens),
+			Object::Type(ty) => ty.to_tokens(tokens),
+		}
+	}
+}
 
 impl Parse for Object {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -172,7 +181,7 @@ impl Parse for Object {
 }
 
 fn expand_object(
-	  object: Object,
+	  object: &Object,
 	 objects: &mut TokenStream2,
 	builders: &mut Vec<Builder>,
 	   attrs: &[syn::Attribute],
@@ -237,9 +246,9 @@ fn span_to<'a>(assignee: &'a [&'a syn::Ident], span: Span) -> std::iter::Map <
 	std::slice::Iter<'a, &'a syn::Ident>,
 	impl FnMut(&'a &'a syn::Ident) -> syn::Ident
 > {
-	let spanned = false;
-	
-	assignee.iter().map(move |name| if spanned { (*name).clone() } else {
-		syn::Ident::new(&name.to_string(), span)
+	assignee.iter().map(move |name| {
+		let mut name = (*name).clone();
+		name.set_span(span);
+		name
 	})
 }
