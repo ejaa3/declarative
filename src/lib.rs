@@ -6,8 +6,6 @@
 
 //! A proc-macro library for creating complex reactive views declaratively and quickly.
 
-#![doc(html_favicon_url = "../logo.svg")]
-#![doc(html_logo_url = "../logo.svg")]
 #![warn(missing_docs)]
 
 pub use declarative::{block, view};

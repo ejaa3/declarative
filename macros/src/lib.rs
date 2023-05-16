@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-#![doc(html_favicon_url = "../logo.svg")]
-#![doc(html_logo_url = "../logo.svg")]
 #![warn(missing_docs)]
 
 //! A proc-macro library for creating complex reactive views declaratively and quickly.
