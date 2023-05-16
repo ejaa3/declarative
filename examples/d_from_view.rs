@@ -77,9 +77,7 @@ impl<Updater> View<Updater> where Updater: Fn(cell::Ref<State>) {
 			}
 		}
 		
-		'binding updater = {
-			clone![window]; move |state: cell::Ref<State>| bindings!()
-		}
+		@updater = { clone![window]; move |state: cell::Ref<State>| bindings!() }
 	}
 }]
 

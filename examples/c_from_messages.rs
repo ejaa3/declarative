@@ -66,7 +66,7 @@ macro_rules! send { // a macro to log send errors
 		}
 		
 		// the following binding closure requires `window` because of the 'bind above:
-		'binding update_view = { // this brace is an expression
+		@update_view = { // this brace is an expression
 			// we clone `window` to move the clone to the closure and thus be able to return `window`:
 			clone![window]; move |state: &State| bindings!()
 			// this time the closure is outside of `clone![]` so that `bindings!()` can be expanded

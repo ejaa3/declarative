@@ -4,15 +4,13 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use proc_macro2::{Span, TokenStream, TokenTree};
-use quote::quote;
-use crate::{content, property};
+use proc_macro2::{Span, TokenStream};
+use quote::{quote, ToTokens};
+use crate::{content, property, Builder};
 
 pub(crate) struct Item {
 	  attrs: Vec<syn::Attribute>,
-	 object: Option<crate::Object>,
-	   mut0: Option<syn::Token![mut]>,
-	   name: syn::Ident,
+	 object: Object,
 	  annex: Option<Box<Annex>>,
 	  build: Option<syn::Token![!]>,
 	content: Vec<content::Content>,
@@ -24,23 +22,16 @@ pub(crate) fn parse(
 	reactive: bool,
 	    root: bool,
 ) -> syn::Result<Item> {
-	let ref0 = input.parse::<syn::Token![ref]>().is_ok();
-	let object = (!ref0).then(|| input.parse()).transpose()?;
-	let mut0 = if !ref0 { input.parse()? } else { None };
-	let name = if ref0 { Some(input.parse()?) } else { input.parse()? }
-		.unwrap_or_else(|| syn::Ident::new(&crate::count(), input.span()));
-	
+	let object = input.parse()?;
 	let pound = input.parse::<syn::Token![#]>();
+	let name = Name::from(&object);
 	
 	if let (Ok(pound), true) = (&pound, root) {
 		Err(syn::Error::new(pound.span, "cannot #interpolate here"))?
 	}
 	
-	let mut annex = pound.is_ok()
-		.then(|| parse_annex(input, &name, reactive)).transpose()?;
-	
+	let mut annex = pound.is_ok().then(|| parse_annex(input, &name, reactive)).transpose()?;
 	let body = annex.as_ref().map(|annex| annex.back.is_none()).unwrap_or(true);
-	
 	let build = if body { input.parse()? } else { None };
 	let mut content = vec![];
 	
@@ -65,7 +56,96 @@ pub(crate) fn parse(
 		}
 	}
 	
-	Ok(Item { attrs, object, mut0, name, annex, build, content })
+	Ok(Item { attrs, object, annex, build, content })
+}
+
+enum Object {
+	Expr (Box<syn::Expr>    , Option<syn::Token![mut]>, syn::Ident),
+	Type (Box<syn::TypePath>, Option<syn::Token![mut]>, syn::Ident),
+	 Ref (Vec<syn::Ident>),
+}
+
+impl ToTokens for Object {
+	fn to_tokens(&self, tokens: &mut TokenStream) {
+		match self {
+			Object::Expr(expr, mut0, name) => {
+				expr.to_tokens(tokens);
+				mut0.to_tokens(tokens);
+				name.to_tokens(tokens);
+			},
+			Object::Type(ty, mut0, name) => {
+				  ty.to_tokens(tokens);
+				mut0.to_tokens(tokens);
+				name.to_tokens(tokens);
+			},
+			Object::Ref(idents) => for ident in idents { ident.to_tokens(tokens) },
+		}
+	}
+}
+
+impl syn::parse::Parse for Object {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		if input.parse::<syn::Token![ref]>().is_ok() {
+			let mut idents = vec![input.parse()?];
+			while input.parse::<syn::Token![.]>().is_ok() {
+				idents.push(input.parse()?);
+			}
+			return Ok(Object::Ref(idents))
+		}
+		
+		let ahead = input.fork();
+		
+		Ok(if ahead.parse::<syn::TypePath>().is_ok() && (
+			   ahead.peek(syn::Token![mut])
+			|| ahead.peek(syn::Ident)
+			|| ahead.peek(syn::Token![#])
+			|| ahead.peek(syn::Token![!])
+			|| ahead.peek(syn::token::Brace)
+		) {
+			Object::Type(input.parse()?, input.parse()?, input.parse::<Option<_>>()?
+				.unwrap_or_else(|| syn::Ident::new(&crate::count(), input.span())))
+		} else {
+			Object::Expr(input.parse()?, input.parse()?, input.parse::<Option<_>>()?
+				.unwrap_or_else(|| syn::Ident::new(&crate::count(), input.span())))
+		})
+	}
+}
+
+fn expand_object(
+	  object: &Object,
+	 objects: &mut TokenStream,
+	builders: &mut Vec<Builder>,
+	   attrs: &[syn::Attribute],
+	 builder: bool,
+) -> Option<usize> {
+	if !builder {
+		objects.extend(match object {
+			Object::Type(ty, mut0, name) => quote![#(#attrs)* let #mut0 #name = #ty::default();],
+			Object::Expr(call, mut0, name) => quote![#(#attrs)* let #mut0 #name = #call;],
+			Object::Ref(_) => return None,
+		});
+		return None
+	}
+	
+	builders.push(match object {
+		#[cfg(feature = "builder-mode")]
+		Object::Type(ty, mut0, name) => Builder(
+			quote![#(#attrs)* let #mut0 #name =], quote![#ty =>], None
+		),
+		#[cfg(not(feature = "builder-mode"))]
+		Object::Type(ty, mut0, name) => quote![#(#attrs)* let #mut0 #name = #ty::default()],
+		
+		#[cfg(feature = "builder-mode")]
+		Object::Expr(expr, mut0, name) => Builder(
+			quote![#(#attrs)* let #mut0 #name =], quote![#expr], None
+		),
+		#[cfg(not(feature = "builder-mode"))]
+		Object::Expr(expr, mut0, name) => quote![#(#attrs)* let #mut0 #name = #expr],
+		
+		Object::Ref(_) => return None,
+	});
+	
+	Some(builders.len() - 1)
 }
 
 struct Annex {
@@ -81,7 +161,7 @@ enum AnnexMode { Field (Span), FnField (Span), Method (Span) }
 
 fn parse_annex(
 	   input: syn::parse::ParseStream,
-	    name: &syn::Ident,
+	    name: &[&syn::Ident],
 	reactive: bool,
 ) -> syn::Result<Box<Annex>> {
 	let annex: syn::Path = input.parse()?;
@@ -105,84 +185,40 @@ fn parse_annex(
 		let mut rest = *cursor;
 		let mut stream = TokenStream::new();
 		
-		find_pound(&mut rest, &mut stream, &[name])
+		crate::find_pound(&mut rest, &mut stream, name)
 			.then(|| (stream, syn::buffer::Cursor::empty()))
-			.ok_or_else(|| cursor.error("not a single `#` found around here"))
+			.ok_or_else(|| cursor.error("no single `#` found around here"))
 	})?;
 	
 	let back = if let AnnexMode::FnField(_) | AnnexMode::Method(_) = &mode {
 		property::parse_back(input, reactive)?
 	} else { None };
 	
-	Ok(Annex { annex, by_ref, mut0, mode, tokens, back }.into())
-}
-
-pub(crate) fn find_pound(
-	 rest: &mut syn::buffer::Cursor,
-	outer: &mut TokenStream,
-	 name: &[&syn::Ident],
-) -> bool {
-	while let Some((tt, next)) = rest.token_tree() {
-		match tt {
-			TokenTree::Group(group) => {
-				let delimiter = group.delimiter();
-				let (mut into, _, next) = rest.group(delimiter).unwrap();
-				let mut inner = TokenStream::new();
-				let found = find_pound(&mut into, &mut inner, name);
-				
-				let mut copy = proc_macro2::Group::new(delimiter, inner);
-				copy.set_span(group.span());
-				outer.extend(quote![#copy]);
-				
-				*rest = next;
-				if found { outer.extend(next.token_stream()); return true }
-			}
-			
-			TokenTree::Punct(punct) => if punct.as_char() == '#' {
-				if let Some((punct, next)) = next.punct() {
-					if punct.as_char() == '#' {
-						outer.extend(quote![#punct]);
-						*rest = next;
-						continue;
-					}
-				}
-				let name = crate::span_to(name, punct.span());
-				outer.extend(quote![#(#name).*]);
-				outer.extend(next.token_stream());
-				return true
-			} else { outer.extend(quote![#punct]); *rest = next; }
-			
-			tt => { outer.extend(quote![#tt]); *rest = next; }
-		}
-	}
-	false
+	Ok(Box::new(Annex { annex, by_ref, mut0, mode, tokens, back }))
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn expand(
-	Item { mut attrs, object, mut0, name, annex, build, content }: Item,
+	Item { mut attrs, object, annex, build, content }: Item,
 	 objects: &mut TokenStream,
-	builders: &mut Vec<crate::Builder>,
+	builders: &mut Vec<Builder>,
 	settings: &mut TokenStream,
-	bindings: &mut TokenStream,
+	bindings: &mut crate::Bindings,
 	  pattrs: &[syn::Attribute],
 	assignee: Option<&[&syn::Ident]>,
 	 builder: Option<usize>,
 ) {
 	crate::extend_attributes(&mut attrs, pattrs);
-	
-	let new_builder = object.as_ref().map(|object| crate::expand_object(
-		object, objects, builders, &attrs, mut0, &name, build.is_some()
-	)).unwrap_or(None);
+	let new_builder = expand_object(&object, objects, builders, &attrs, build.is_some());
 	
 	for content in content { content::expand(
-		content, objects, builders, settings, bindings, &attrs, &[&name], new_builder
+		content, objects, builders, settings, bindings, &attrs, &Name::from(&object), new_builder
 	) }
 	
 	let Some(assignee) = assignee else { return };
 	
 	let Some(annex) = annex else { return objects.extend(syn::Error::new_spanned(
-		quote![#object #mut0 #name #build], "missing #interpolation"
+		quote![#object #build], "missing #interpolation"
 	).into_compile_error()) };
 	
 	let Annex { annex, by_ref, mut0, mode, tokens, back } = *annex;
@@ -228,5 +264,28 @@ pub(crate) fn expand(
 				quote![#(#attrs)* #annex(#by_ref #mut0 #(#assignee).*, #tokens);]
 			}
 		});
+	}
+}
+
+enum Name<'a> { Slice([&'a syn::Ident; 1]), Vec(Vec<&'a syn::Ident>) }
+
+impl<'a> From <&'a Object> for Name<'a> {
+	fn from(object: &'a Object) -> Self {
+		match &object {
+			Object::Expr(.., name) => Name::Slice([name]),
+			Object::Type(.., name) => Name::Slice([name]),
+			Object::Ref(ref0) => Name::Vec(ref0.iter().collect()),
+		}
+	}
+}
+
+impl<'a> std::ops::Deref for Name<'a> {
+	type Target = [&'a syn::Ident];
+	
+	fn deref(&self) -> &Self::Target {
+		match self {
+			Name::Slice(slice) => slice,
+			Name::Vec(vec) => vec.as_slice(),
+		}
 	}
 }

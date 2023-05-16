@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
+#![doc(html_favicon_url = "../logo.svg")]
+#![doc(html_logo_url = "../logo.svg")]
 #![warn(missing_docs)]
 
 //! A proc-macro library for creating complex reactive views declaratively and quickly.
@@ -14,8 +16,8 @@ mod item;
 mod property;
 
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{ToTokens, quote};
+use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
+use quote::quote;
 use syn::{parse::{Parse, ParseStream}, visit_mut::VisitMut};
 
 struct Roots(Vec<item::Item>);
@@ -31,15 +33,26 @@ impl Parse for Roots {
 	}
 }
 
+#[derive(Default)]
+struct Bindings { tokens: Vec<TokenStream2>, stream: TokenStream2, }
+
 fn expand(Roots(roots): Roots) -> TokenStream2 {
 	let objects  = &mut TokenStream2::new();
 	let builders = &mut vec![];
 	let settings = &mut TokenStream2::new();
-	let bindings = &mut TokenStream2::new();
+	let bindings = &mut Bindings::default();
 	
 	for root in roots { item::expand(
 		root, objects, builders, settings, bindings, &[], None, None
 	) }
+	
+	if !bindings.tokens.is_empty() {
+		for tokens in &bindings.tokens {
+			objects.extend(syn::Error::new_spanned(
+				tokens, "bindings must be consumed with the macro placeholder `bindings!`"
+			).to_compile_error());
+		}
+	}
 	
 	let builders = builders.iter().rev();
 	quote![#objects #(#builders;)* #settings]
@@ -61,7 +74,7 @@ fn expand(Roots(roots): Roots) -> TokenStream2 {
 /// }
 /// ~~~
 pub fn block(stream: TokenStream) -> TokenStream {
-	expand(syn::parse_macro_input!(stream)).into()
+	TokenStream::from(expand(syn::parse_macro_input!(stream)))
 }
 
 struct Visitor { name: &'static str, stream: TokenStream2 }
@@ -113,16 +126,15 @@ impl VisitMut for Visitor {
 /// ~~~
 pub fn view(stream: TokenStream, code: TokenStream) -> TokenStream {
 	let stream = expand(syn::parse_macro_input!(stream));
-	let syntax_tree = &mut syn::parse2(code.into()).unwrap();
+	let syntax_tree = &mut syn::parse2(TokenStream2::from(code)).unwrap();
 	
 	let mut visitor = Visitor { name: "expand_view_here", stream };
 	visitor.visit_file_mut(syntax_tree);
 	
 	if !visitor.name.is_empty() {
-		panic!("the view must be consumed with the pseudo-macro `expand_view_here!`")
+		panic!("the view must be consumed with the macro placeholder `expand_view_here!`")
 	}
-	
-	quote![#syntax_tree].into()
+	TokenStream::from(quote![#syntax_tree])
 }
 
 thread_local![static COUNT: std::cell::RefCell<usize> = {
@@ -144,74 +156,10 @@ type Builder = TokenStream2;
 struct Builder(TokenStream2, TokenStream2, Option<syn::Token![;]>);
 
 #[cfg(feature = "builder-mode")]
-impl ToTokens for Builder {
+impl quote::ToTokens for Builder {
 	fn to_tokens(&self, tokens: &mut TokenStream2) {
 		let Builder(left, right, end) = self;
 		tokens.extend(quote![#left builder_mode!(#end #right)])
-	}
-}
-
-enum Object { Expr(Box<syn::Expr>), Type(Box<syn::TypePath>) }
-
-impl ToTokens for Object {
-	fn to_tokens(&self, tokens: &mut TokenStream2) {
-		match self {
-			Object::Expr(expr) => expr.to_tokens(tokens),
-			Object::Type(ty) => ty.to_tokens(tokens),
-		}
-	}
-}
-
-impl Parse for Object {
-	fn parse(input: ParseStream) -> syn::Result<Self> {
-		let ahead = input.fork();
-		
-		if ahead.parse::<syn::TypePath>().is_ok() && (
-			   ahead.peek(syn::Token![mut])
-			|| ahead.peek(syn::Ident)
-			|| ahead.peek(syn::Token![#])
-			|| ahead.peek(syn::Token![!])
-			|| ahead.peek(syn::token::Brace)
-		) {
-			Ok(Object::Type(input.parse()?))
-		} else {
-			Ok(Object::Expr(input.parse()?))
-		}
-	}
-}
-
-fn expand_object(
-	  object: &Object,
-	 objects: &mut TokenStream2,
-	builders: &mut Vec<Builder>,
-	   attrs: &[syn::Attribute],
-	    mut0: Option<syn::Token![mut]>,
-	    name: &syn::Ident,
-	 builder: bool,
-) -> Option<usize> {
-	if builder {
-		builders.push(match object {
-			#[cfg(feature = "builder-mode")]
-			Object::Type(ty) => Builder(
-				quote![#(#attrs)* let #mut0 #name = ], quote![#ty => ], None
-			),
-			#[cfg(not(feature = "builder-mode"))]
-			Object::Type(ty) => quote![#(#attrs)* let #mut0 #name = #ty::default()],
-			
-			#[cfg(feature = "builder-mode")]
-			Object::Expr(expr) => Builder(
-				quote![#(#attrs)* let #mut0 #name = ], quote![#expr ], None
-			),
-			#[cfg(not(feature = "builder-mode"))]
-			Object::Expr(expr) => quote![#(#attrs)* let #mut0 #name = #expr],
-		});
-		Some(builders.len() - 1)
-	} else {
-		objects.extend(match object {
-			Object::Type(ty) => quote![#(#attrs)* let #mut0 #name = #ty::default();],
-			Object::Expr(call) => quote![#(#attrs)* let #mut0 #name = #call;],
-		});
-		None
 	}
 }
 
@@ -240,6 +188,66 @@ fn extend_attributes(attrs: &mut Vec<syn::Attribute>, pattrs: &[syn::Attribute])
 	attrs.reserve(pattrs.len() + current.len());
 	attrs.extend_from_slice(pattrs);
 	attrs.extend(current.into_iter());
+}
+
+fn find_pound(rest: &mut syn::buffer::Cursor, outer: &mut TokenStream2, name: &[&syn::Ident]) -> bool {
+	while let Some((tt, next)) = rest.token_tree() {
+		match tt {
+			TokenTree::Group(group) => {
+				let delimiter = group.delimiter();
+				let (mut into, _, next) = rest.group(delimiter).unwrap();
+				let mut inner = TokenStream2::new();
+				let found = find_pound(&mut into, &mut inner, name);
+				
+				let mut copy = proc_macro2::Group::new(delimiter, inner);
+				copy.set_span(group.span());
+				outer.extend(quote![#copy]);
+				
+				*rest = next;
+				if found { outer.extend(next.token_stream()); return true }
+			}
+			
+			TokenTree::Punct(punct) => if punct.as_char() == '#' {
+				if let Some((punct, next)) = next.punct() {
+					if punct.as_char() == '#' {
+						outer.extend(quote![#punct]);
+						*rest = next;
+						continue;
+					}
+				}
+				let name = crate::span_to(name, punct.span());
+				outer.extend(quote![#(#name).*]);
+				outer.extend(next.token_stream());
+				return true
+			} else { outer.extend(quote![#punct]); *rest = next; }
+			
+			tt => { outer.extend(quote![#tt]); *rest = next; }
+		}
+	}
+	false
+}
+
+fn try_bind(
+	 objects: &mut TokenStream2,
+	bindings: &mut crate::Bindings,
+	    expr: &mut syn::Expr,
+	      at: syn::Token![@],
+) {
+	if std::mem::take(&mut bindings.tokens).is_empty() {
+		return objects.extend(syn::Error::new(
+			at.span, "there are no bindings to consume"
+		).to_compile_error())
+	}
+	
+	let stream = std::mem::take(&mut bindings.stream);
+	let mut visitor = Visitor { name: "bindings", stream };
+	visitor.visit_expr_mut(expr);
+	
+	if !visitor.name.is_empty() {
+		objects.extend(syn::Error::new(
+			at.span, "bindings must be consumed with the macro placeholder `bindings!`"
+		).to_compile_error())
+	}
 }
 
 fn span_to<'a>(assignee: &'a [&'a syn::Ident], span: Span) -> std::iter::Map <

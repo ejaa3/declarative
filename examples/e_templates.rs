@@ -10,7 +10,8 @@ use gtk::{glib, prelude::*};
 // the second (not the first) thing to do is this structure:
 struct BoxTemplate {
 	 root: gtk::Box, // the main widget
-	label: gtk::Label, // the rest are widgets that you want to “publish”
+	label: gtk::Label, // the rest are widgets that you want to “publish” or “export”
+	reset: gtk::Button, // this widget will not be contained in the main one
 }
 
 // to edit any widget in the scope of this item:
@@ -31,11 +32,18 @@ impl std::ops::Deref for BoxTemplate {
 		margin_start: 6
 		margin_end: 6 #:
 		
-		gtk::Label label #append(&#) { } // I want to publish this widget
+		gtk::Label label #append(&#) !{ // I want to publish this widget
+			label: glib::gformat!("This is the {nth} view")
+		}
 		
 		gtk::Button::with_label("Increase") #append(&#) { // this is private
 			connect_clicked: clone![sender; move |_| send!(Msg::Increase => sender)]
 		}
+	}
+	// we will also export this widget although it is independent of the root:
+	gtk::Button reset !{ // we must do something with it in the main view so that it is not lost
+		label: glib::gformat!("Reset {nth}") #:
+		connect_clicked: clone![sender; move |_| send!(Msg::Reset => sender)]
 	}
 }]
 
@@ -44,14 +52,14 @@ impl BoxTemplate {
 	// to write `::new()` but there would be no parameters
 	
 	// could also be unassociated function:
-	fn new(sender: &glib::Sender<Msg>) -> Self {
+	fn new(nth: &str, sender: &glib::Sender<Msg>) -> Self {
 		expand_view_here! { }
-		Self { root, label }
+		Self { root, label, reset }
 	}
 } // now let's use the template:
 
 #[derive(Debug)]
-enum Msg { Increase, Decrease } // Elm again
+enum Msg { Increase, Decrease, Reset } // Elm again
 
 struct State { count: i32 }
 
@@ -59,6 +67,7 @@ fn update_state(state: &mut State, msg: Msg) {
 	match msg {
 		Msg::Increase => state.count = state.count.wrapping_add(1),
 		Msg::Decrease => state.count = state.count.wrapping_sub(1),
+		Msg::Reset    => state.count = 0,
 	}
 }
 
@@ -74,9 +83,8 @@ fn update_state(state: &mut State, msg: Msg) {
 			spacing: 6 #:
 			
 			// `BoxTemplate` is not a widget but its `root` field is (#interpolate well):
-			BoxTemplate::new(&sender1) #append(&#.root) {
+			BoxTemplate::new("first", &sender1) first #append(&#.root) {
 				label => { // we are editing the `label` field
-					set_label: "This is the first view"
 					'bind set_label: &format!("The first count is: {}", state.count)
 				}
 				// we can interpolate here thanks to `Deref`;
@@ -85,21 +93,35 @@ fn update_state(state: &mut State, msg: Msg) {
 					connect_clicked: move |_| send!(Msg::Decrease => sender1)
 				}
 				// be careful editing a template after creating a binding closure that updates it:
-				'binding update1 = move |state: &State| bindings!()
-				// at this point the entire template has moved to the binding closure
+				@update1 = move |state: &State| bindings!()
+				// at this point the template has partially moved to the binding closure,
+				// so `Deref` can no longer be used (you can edit `like => { this; }`)
 			}
 			
 			gtk::Separator #append(&#) { }
 			
-			BoxTemplate::new(&sender2) #append(&#.root) { // almost the same code as above
-				label => {
-					set_label: "This is the second view"
-					'bind set_label: &format!("The second count is: {}", state.count)
-				}
+			// almost the same code as above:
+			BoxTemplate::new("second", &sender2) second #append(&#.root) {
+				// if the field is only edited once, it is not necessary to use braces:
+				label => 'bind set_label: &format!("The second count is: {}", state.count)
+				
 				gtk::Button::with_label("Decrease") #append(&#) {
 					connect_clicked: move |_| send!(Msg::Decrease => sender2)
 				}
-				'binding update2 = move |state: &State| bindings!()
+				@update2 = move |state: &State| bindings!()
+			}
+			
+			gtk::Separator #append(&#) { }
+			
+			gtk::Box #append(&#) !{
+				margin_bottom: 6
+				margin_end: 6
+				margin_start: 6
+				spacing: 6 #:
+				
+				// we put the independent widget (the reset button) of the `first` and `second` templates here:
+				ref  first.reset #append(&#) { set_hexpand: true }
+				ref second.reset #append(&#) { set_hexpand: true }
 			}
 		}
 	}

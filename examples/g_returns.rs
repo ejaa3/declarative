@@ -24,6 +24,7 @@ fn outer_extension(stack: &gtk::Stack, name: &str, title: &str) -> gtk::Label {
 	gtk::ApplicationWindow window !{
 		application: app
 		default_height: 300
+		default_width: 360
 		
 		gtk::HeaderBar #titlebar(&#) { }
 		
@@ -74,7 +75,7 @@ fn outer_extension(stack: &gtk::Stack, name: &str, title: &str) -> gtk::Label {
 					'bind set_label: &format!("Changes (from an extension): {changes}")
 				}
 				
-				'binding update_view = move |changes: u8| bindings!()
+				@update_view = move |changes: u8| bindings!()
 				
 				connect_visible_child_notify: move |_| {
 					changes.set(changes.get().wrapping_add(1));

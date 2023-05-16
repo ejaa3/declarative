@@ -20,7 +20,7 @@ fn update_state(state: &mut State, msg: Msg) {
 	}
 }
 
-#[declarative::view { // component factory
+#[declarative::view { // component factory (similar to a template)
 	gtk::Box root !{
 		orientation: gtk::Orientation::Vertical
 		spacing: 6 #:
@@ -30,8 +30,8 @@ fn update_state(state: &mut State, msg: Msg) {
 			'bind set_label: &format!("The {nth} count is: {}", state.count)
 		} // at this point the `gtk::Label` is appended to the `gtk::Box`, so...
 		
-		// 'binding here to not clone the `gtk::Label`
-		'binding update_view = move |state: &State| bindings!()
+		// we consume the bindings here so as not to clone the `gtk::Label`:
+		@update_view = move |state: &State| bindings!()
 		
 		gtk::Button::with_label("Increase") #append(&#) {
 			// for several clones use commas:
@@ -95,7 +95,7 @@ fn component(nth: &'static str, parent: &glib::Sender<&'static str>) -> gtk::Box
 			}
 		}
 		
-		'binding update_view = move |nth| bindings!()
+		@update_view = move |nth| bindings!()
 	}
 }]
 

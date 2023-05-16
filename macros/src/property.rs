@@ -18,23 +18,30 @@ pub(crate) struct Prop {
 
 enum Mode {
 	Edit    (Vec<content::Content>),
-	Field   (Box<syn::Expr>),
-	Method  { span: Span, args: Vec<syn::Expr>, back: Option<Box<Back>> },
-	FnField { args: Vec<syn::Expr>, back: Option<Box<Back>> },
+	Field   (Option<syn::Token![@]>, Box<syn::Expr>),
+	Method  { span: Span, args: Vec<(Option<syn::Token![@]>, syn::Expr)>, back: Option<Box<Back>> },
+	FnField { args: Vec<(Option<syn::Token![@]>, syn::Expr)>, back: Option<Box<Back>> },
 }
 
 impl crate::ParseReactive for Prop {
 	fn parse(input: syn::parse::ParseStream,
 	         attrs: Option<Vec<syn::Attribute>>,
 	      reactive: bool,
-	) -> syn::Result<Prop> {
+	) -> syn::Result<Self> {
 		let attrs = attrs.unwrap_or_default();
 		let prop: syn::Path = input.parse()?;
+		let at = || {
+			let at = input.parse::<Option<syn::Token![@]>>()?;
+			if let (Some(at), false) = (at, reactive) {
+				Err(syn::Error::new(at.span, "cannot consume bindings here"))?
+			}
+			Ok::<_, syn::Error>(at)
+		};
 		
 		let invokable = || {
-			let mut args = vec![input.parse()?];
+			let mut args = vec![(at()?, input.parse()?)];
 			while input.parse::<syn::Token![,]>().is_ok() {
-				args.push(input.parse()?);
+				args.push((at()?, input.parse()?));
 			}
 			input.parse::<Option<syn::Token![;]>>()?;
 			let back = parse_back(input, reactive)?;
@@ -67,7 +74,7 @@ impl crate::ParseReactive for Prop {
 				Mode::Edit(vec![crate::ParseReactive::parse(input, None, reactive)?])
 			}
 		} else if input.parse::<syn::Token![=]>().is_ok() {
-			Mode::Field(input.parse()?)
+			Mode::Field(at()?, input.parse()?)
 		} else if let Ok(colon) = input.parse::<syn::Token![:]>() {
 			if input.parse::<syn::Token![=]>().is_ok() {
 				let (args, back) = invokable()?;
@@ -87,6 +94,15 @@ impl crate::ParseReactive for Prop {
 		} else { Err(input.error("expected `=>`, `=`, `:`, `:=`, `;` or `;;`"))? };
 		
 		Ok(Prop { attrs, prop, by_ref: None, mut0: None, mode })
+	}
+}
+
+impl crate::ParseReactive for Box<Prop> {
+	fn parse(input: syn::parse::ParseStream,
+	         attrs: Option<Vec<syn::Attribute>>,
+	      reactive: bool,
+	) -> syn::Result<Self> {
+		Ok(Box::new(crate::ParseReactive::parse(input, attrs, reactive)?))
 	}
 }
 
@@ -126,7 +142,7 @@ pub(crate) fn parse_back(
 		content.push(crate::ParseReactive::parse(&braces, None, reactive)?)
 	}
 	
-	Ok(Some(Back { token, mut0, back, build, content }.into()))
+	Ok(Some(Box::new(Back { token, mut0, back, build, content })))
 }
 
 pub(crate) fn expand_back(
@@ -134,7 +150,7 @@ pub(crate) fn expand_back(
 	 objects: &mut TokenStream,
 	builders: &mut Vec<crate::Builder>,
 	settings: &mut TokenStream,
-	bindings: &mut TokenStream,
+	bindings: &mut crate::Bindings,
 	   attrs: Vec<syn::Attribute>,
 	   right: TokenStream,
 ) {
@@ -169,7 +185,7 @@ pub(crate) fn expand(
 	 objects: &mut TokenStream,
 	builders: &mut Vec<crate::Builder>,
 	settings: &mut TokenStream,
-	bindings: &mut TokenStream,
+	bindings: &mut crate::Bindings,
 	  pattrs: &[syn::Attribute],
 	assignee: &[&syn::Ident],
 	 builder: Option<usize>,
@@ -179,7 +195,6 @@ pub(crate) fn expand(
 			objects.extend(syn::Error::new_spanned(
 				quote![#(#attrs)*], "cannot use attributes in builder mode"
 			).into_compile_error());
-			
 			return None
 		}
 		
@@ -187,7 +202,6 @@ pub(crate) fn expand(
 			objects.extend(syn::Error::new_spanned(
 				prop, "can only call methods in builder mode"
 			).into_compile_error());
-			
 			return None
 		};
 		
@@ -195,11 +209,11 @@ pub(crate) fn expand(
 			objects.extend(syn::Error::new_spanned(
 				prop, "cannot use long path in builder mode"
 			).into_compile_error());
-			
 			return None
 		}
 		
 		if let Some(back) = back { back.do_not_use(objects); return None }
+		let args = try_bind(objects, bindings, args);
 		return Some(quote![.#prop(#(#args),*)])
 	}
 	
@@ -222,23 +236,44 @@ pub(crate) fn expand(
 			);
 			return None
 		}
-		Mode::Field(value) => {
+		Mode::Field(at, mut value) => {
+			if let Some(at) = at { crate::try_bind(objects, bindings, &mut value, at) }
 			return Some(quote![#(#pattrs)* #(#attrs)* #(#assignee.)* #prop = #value;])
-		},
+		}
 		Mode::Method { span, args, back } => if prop.segments.len() == 1 {
+			let args = try_bind(objects, bindings, args);
 			(quote![#(#assignee.)* #prop(#(#args),*)], back)
 		} else {
 			let assignee = crate::span_to(assignee, span);
+			let args = try_bind(objects, bindings, args);
 			(quote![#prop(#by_ref #mut0 #(#assignee).*, #(#args),*)], back)
 		}
-		Mode::FnField { args, back } => (quote![(#(#assignee.)* #prop) (#(#args),*)], back), // WARNING #prop must be a field name
+		Mode::FnField { args, back } => {
+			let args = try_bind(objects, bindings, args);
+			(quote![(#(#assignee.)* #prop) (#(#args),*)], back) // WARNING #prop must be a field name
+		}
 	};
 	
 	let Some(back0) = back else {
-		return quote![#(#pattrs)* #(#attrs)* #right;].into()
+		return Some(quote![#(#pattrs)* #(#attrs)* #right;])
 	};
 	
 	crate::extend_attributes(&mut attrs, pattrs);
 	expand_back(*back0, objects, builders, settings, bindings, attrs, right);
 	None
+}
+
+fn try_bind<'a>(
+	 objects: &'a mut TokenStream,
+	bindings: &'a mut crate::Bindings,
+	    args: Vec<(Option<syn::Token![@]>, syn::Expr)>
+) -> std::iter::Map <
+	std::vec::IntoIter<(Option<syn::Token![@]>, syn::Expr)>,
+	impl FnMut((Option<syn::Token![@]>, syn::Expr)) -> syn::Expr + 'a
+> {
+	args.into_iter().map(|(at, mut arg)| {
+		if let Some(at) = at {
+			crate::try_bind(objects, bindings, &mut arg, at);
+		} arg
+	})
 }

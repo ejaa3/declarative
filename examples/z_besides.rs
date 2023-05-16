@@ -45,7 +45,7 @@ impl Besides {
 		inner = None
 		
 		// to assign items to fields, interpolate with braces:
-		Besides #inner { Some(#.into()) } { }
+		Besides #inner { Some(Box::new(#)) } { }
 		
 		// to assign items to functional fields, interpolate with brackets:
 		Some(()) #funny_arg [#] { unwrap; }
@@ -87,6 +87,9 @@ impl Besides {
 			/// inner property
 			append: None
 			
+			/// inner ref
+			ref outer.inner #append(#.as_deref()) { }
+			
 			/// inner extension 1
 			@Besides::method(&#)
 			
@@ -116,8 +119,8 @@ impl Besides {
 			}
 		}
 		
-		/// binding
-		'binding closure = move || bindings!()
+		/// bindings
+		@closure = move || bindings!()
 		
 		/// outer if
 		if "this".is_empty() { // conditional initialization (you can also `match`)
@@ -131,6 +134,9 @@ impl Besides {
 				/// outer if inner property
 				append: None
 			}
+			
+			/// outer if ref
+			ref outer.inner #append(#.as_deref()) { }
 		}
 	}
 }]

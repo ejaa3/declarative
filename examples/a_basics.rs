@@ -19,7 +19,7 @@ fn main() -> glib::ExitCode {
 	builder_mode()
 }
 
-fn add_five(string: &mut String) {
+fn add_five(string: &mut String) { // this function is a “chunk” of view
 	declarative::block! {
 		// to edit an argument or variable before expansion, use `ref`:
 		ref string { push_str: "5, " }
@@ -31,7 +31,7 @@ fn add_five(string: &mut String) {
 	String mut main_string { // with `mut` you can mutate here
 		
 		// this is a method call:
-		push_str: &first // `first` is another item (see below)
+		push_str: &first // `first` is another item (at the end of the view)
 		// although `push_str()` is not a setter, but let's assume
 		
 		// this is a composition:
@@ -64,8 +64,7 @@ fn add_five(string: &mut String) {
 		// you can also compose with `ref`:
 		ref pre_view #push_str(&#) { push_str: "6, " }
 		
-		// by coincidence we can use `ref` with `first` although
-		// the real purpose of `ref` is what lines 24 and 64 say:
+		// by coincidence we can use `ref` with `first`:
 		ref first #push_str(&#) {
 			clear; // you can call a method without arguments with semicolon
 			push_str: "7, "
@@ -79,7 +78,7 @@ fn add_five(string: &mut String) {
 #[declarative::view { // a second view
 	String::from("9, ") mut end {
 		push_str: {
-			// the pseudo-macro `expand_view_here!` can only consume one view:
+			// the macro placeholder `expand_view_here!` can only consume one view:
 			expand_view_here! { } // here the third view is expanded (reason below)
 			ten
 		}
