@@ -5,33 +5,28 @@
  */
 
 use declarative::{builder_mode, clone};
-use gtk::prelude::*;
+use gtk::{glib, prelude::*};
 use once_cell::unsync::OnceCell;
-use std::{cell, rc::Rc};
+use std::{cell::{Ref, RefCell, RefMut}, rc::Rc};
 
 struct State { count: i32 }
 
-// let's try to update the view from the view itself
+// let's try to update the state from the view itself
 // avoiding the application logic in the view:
-struct View<Updater> {
-	  state: cell::RefCell<State>, // `state` must be mutable, and so `RefCell`
-	updater: OnceCell<Updater>, // with this we will update the view
-} // this approach requires sharing (as `Rc<View>`)
+struct View<U> { // `U` is for the closure that [U]pdates the view
+	  state: RefCell<State>, // `state` must be mutable, and so `RefCell`
+	updater: OnceCell<U>, // with this we will update the view
+} // this approach requires sharing (as `Rc<View>` or a static view)
 
-// view does not mutate `state` when it is updating, and so `Ref<State>`:
-impl<Updater> View<Updater> where Updater: Fn(cell::Ref<State>) {
-	fn new() -> Self {
-		let state = State { count: 0 }.into(); // `state` is initialized
-		Self { state, updater: OnceCell::new() }
-	}
-	
-	fn update(&self, state_updater: fn(cell::RefMut<State>)) {
+// view does not mutate `state` while “refreshing”...
+impl<U> View<U> where U: Fn(Ref<State>) { // and so `Ref<State>`
+	fn update(&self, state_updater: fn(RefMut<State>)) {
 		// the state is mutated from the view itself:
 		state_updater(self.state.borrow_mut());
 		
 		// application logic here
 		
-		// now let's update the view:
+		// now let's update the view (state does not mutate):
 		self.updater.get().unwrap() (self.state.borrow())
 	}
 }
@@ -77,23 +72,25 @@ impl<Updater> View<Updater> where Updater: Fn(cell::Ref<State>) {
 			}
 		}
 		
-		@updater = { clone![window]; move |state: cell::Ref<State>| bindings!() }
+		@updater = { clone![window]; move |state: Ref<State>| bindings!() }
 	}
 }]
 
-fn window(app: &gtk::Application) -> gtk::ApplicationWindow {
-	let view = Rc::from(View::new()); // we create shareable `view`
+fn start(app: &gtk::Application) {
+	let state = RefCell::new(State { count: 0 }); // `state` is initialized
+	let view = Rc::new(View { state, updater: OnceCell::new() });
 	
 	expand_view_here! { } // `view` is shared here
+	
 	updater(view.state.borrow()); // initial update
 	
-	// we give the binding closure to the state:
-	view.updater.set(updater).unwrap_or(());
-	window
+	// we give the `updater` closure to the state:
+	view.updater.set(updater).unwrap_or_else(|_| panic!());
+	window.present()
 }
 
-fn main() -> gtk::glib::ExitCode {
+fn main() -> glib::ExitCode {
 	let app = gtk::Application::default();
-	app.connect_activate(move |app| window(app).present());
+	app.connect_activate(start);
 	app.run()
 }

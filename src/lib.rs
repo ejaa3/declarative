@@ -21,38 +21,73 @@ macro_rules! builder_mode {
 }
 
 #[macro_export]
-/// A small macro for frequent cloning, especially when moving to closures.
+/// A macro for frequent cloning, especially when moving to closures.
 ///
-/// ## Example
+/// ## Examples
+///
+/// In the following `shared` is a clone with the same name as the variable
+/// and `custom` is a custom clone (not `shared.clone()`) with a custom name:
 /// ~~~
-/// use declarative::clone;
+/// use {std::rc::Rc, declarative::clone};
 /// 
-/// fn example() {
-///     let shared = std::rc::Rc::new(2);
-///     
-///     let closure = clone![shared, other as shared.clone(); move || {
-///         println!("{shared} + {other} = {}", *shared + *other)
-///     }];
-///     
-///     let another = {
-///         clone![shared, other as shared.clone()];
-///         move || println!("{shared} + {other} = {}", *shared + *other)
-///     };
-///     
-///     closure();
-///     another();
-/// }
+/// let shared = Rc::new(2);
+/// 
+/// let closure = clone![shared, custom = Rc::clone(&shared); move || {
+///     println!("{shared} + {custom} = {}", *shared + *custom)
+/// }];
+/// 
+/// closure(); // 2 + 2 = 4
+/// Rc::strong_count(&shared); // `shared` is still usable here
+/// ~~~
+/// 
+/// In the following everything is cloned as `something.clone()`:
+/// - `renamed` is a clone of `shared` with a custom name.
+/// - `number.field` is cloned with the same field name.
+/// - `number.field` is cloned again with a custom name.
+/// 
+/// ~~~
+/// use {std::rc::Rc, declarative::clone};
+/// 
+/// struct Number { field: Rc<i32> }
+/// 
+/// let shared = Rc::new(2);
+/// let number = Number { field: Rc::clone(&shared) };
+/// 
+/// let closure = {
+///     clone![shared as renamed, number.field, number.field as other];
+///     let sum = *renamed + *field + *other;
+///     move || println!("{renamed} + {field} + {other} = {sum}")
+/// };
+/// 
+/// closure(); // 2 + 2 + 2 = 6
+/// Rc::strong_count(&shared); // `shared` is still usable here
+/// Rc::strong_count(&number.field); // `number.field` too
 /// ~~~
 macro_rules! clone {
-	[fallback![$($foo:tt)+] $($bar:tt)+] => { $($bar)+ };
-	[fallback![$($foo:tt)+]            ] => { $($foo)+ };
+	[if [$($_:tt)+] { $($foo:tt)* } else { $($bar:tt)* }] => { $($foo)* };
+	[if [         ] { $($foo:tt)* } else { $($bar:tt)* }] => { $($bar)* };
 	
-	[$($let:ident $(as $expr:expr)?),+] => {
-		$(let $let = $crate::clone![fallback![$let.clone()] $($expr)?];)+
+	($last:expr => $($tt:tt)*) => {{ $($tt)* $last }};
+	(           => $($tt:tt)*) =>  { $($tt)* };
+	
+	[.$field:ident] => { $field };
+	[.$field:ident $(.$rest:ident)+] => { $crate::clone![$(.$rest)+] };
+	
+	[$($let:ident $(.$field:ident)* $(as $name:ident)? $(= $expr:expr)?),+ $(,)? $(; $last:expr)?] => {
+		$crate::clone!($($last)? => $($crate::clone! {
+			if [$($field)* $($name)?] {
+				$crate::clone![if [$($expr)?] {
+					compile_error!("cannot use fields or `as` while custom cloning");
+				} else {
+					let $crate::clone! {
+						if [$($name)?] { $($name)? } else { $crate::clone![$(.$field)*] }
+					} = $let $(.$field)* .clone();
+				}]
+			} else {
+				let $let = $crate::clone! {
+					if [$($expr)?] { $($expr)? } else { $let.clone() }
+				};
+			}
+		})+)
 	};
-	
-	[$($let:ident $(as $expr:expr)?),+; $last:expr] => {{
-		$(let $let = $crate::clone![fallback![$let.clone()] $($expr)?];)+
-		$last
-	}};
 }

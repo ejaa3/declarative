@@ -17,6 +17,7 @@ version     = { workspace = true }
 proc-macro = true
 
 [dependencies]
+compact_str = { version = '0.7', default-features = false }
 proc-macro2 = '1'
 quote = '1'
 syn = { version = '2', features = ['full', 'visit-mut'] }

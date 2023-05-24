@@ -8,11 +8,11 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use crate::content;
 
-pub(crate) struct Prop {
+pub struct Prop {
 	 attrs: Vec<syn::Attribute>,
 	  prop: syn::Path,
 	by_ref: Option<syn::Token![&]>,
-	  mut0: Option<syn::Token![mut]>,
+	  mut_: Option<syn::Token![mut]>,
 	  mode: Mode,
 }
 
@@ -38,7 +38,7 @@ impl crate::ParseReactive for Prop {
 			Ok::<_, syn::Error>(at)
 		};
 		
-		let invokable = || {
+		let callable = || {
 			let mut args = vec![(at()?, input.parse()?)];
 			while input.parse::<syn::Token![,]>().is_ok() {
 				args.push((at()?, input.parse()?));
@@ -49,7 +49,7 @@ impl crate::ParseReactive for Prop {
 		};
 		
 		if prop.get_ident().is_none() {
-			let (by_ref, mut0) = if prop.segments.len() == 1 {
+			let (by_ref, mut_) = if prop.segments.len() == 1 {
 				(None, None)
 			} else {
 				(input.parse()?, input.parse()?)
@@ -57,13 +57,13 @@ impl crate::ParseReactive for Prop {
 			
 			let (span, (args, back)) =
 				if let Ok(colon) = input.parse::<syn::Token![:]>() {
-					(colon.span, invokable()?)
+					(colon.span, callable()?)
 				} else if let Ok(semi) = input.parse::<syn::Token![;]>() {
 					(semi.span, (vec![], parse_back(input, reactive)?))
 				} else { Err(input.error("expected `:` or `;`"))? };
 			
 			let mode = Mode::Method { span, args, back };
-			return Ok(Prop { attrs, prop, by_ref, mut0, mode })
+			return Ok(Prop { attrs, prop, by_ref, mut_, mode })
 		}
 		
 		let mode = if input.parse::<syn::Token![=>]>().is_ok() {
@@ -77,10 +77,10 @@ impl crate::ParseReactive for Prop {
 			Mode::Field(at()?, input.parse()?)
 		} else if let Ok(colon) = input.parse::<syn::Token![:]>() {
 			if input.parse::<syn::Token![=]>().is_ok() {
-				let (args, back) = invokable()?;
+				let (args, back) = callable()?;
 				Mode::FnField { args, back }
 			} else {
-				let (args, back) = invokable()?;
+				let (args, back) = callable()?;
 				Mode::Method { span: colon.span, args, back }
 			}
 		} else if let Ok(semi) = input.parse::<syn::Token![;]>() {
@@ -93,7 +93,7 @@ impl crate::ParseReactive for Prop {
 			}
 		} else { Err(input.error("expected `=>`, `=`, `:`, `:=`, `;` or `;;`"))? };
 		
-		Ok(Prop { attrs, prop, by_ref: None, mut0: None, mode })
+		Ok(Prop { attrs, prop, by_ref: None, mut_: None, mode })
 	}
 }
 
@@ -106,22 +106,22 @@ impl crate::ParseReactive for Box<Prop> {
 	}
 }
 
-pub(crate) struct Back {
+pub struct Back {
 	pub   token: syn::Lifetime,
-	pub    mut0: Option<syn::Token![mut]>,
+	pub    mut_: Option<syn::Token![mut]>,
 	pub    back: syn::Ident,
 	pub   build: Option<syn::Token![!]>,
 	pub content: Vec<content::Content>,
 }
 
 impl Back {
-	pub(crate) fn do_not_use(self, stream: &mut TokenStream) {
+	pub fn do_not_use(self, stream: &mut TokenStream) {
 		let error = syn::Error::new(self.token.span(), "cannot use 'back in builder mode");
 		stream.extend(error.into_compile_error())
 	}
 }
 
-pub(crate) fn parse_back(
+pub fn parse_back(
 	input: syn::parse::ParseStream, reactive: bool,
 ) -> syn::Result<Option<Box<Back>>> {
 	let token = if input.fork().parse::<syn::Lifetime>()
@@ -129,7 +129,7 @@ pub(crate) fn parse_back(
 			input.parse::<syn::Lifetime>()?
 		} else { return Ok(None) };
 	
-	let mut0 = input.parse()?;
+	let mut_ = input.parse()?;
 	let back = input.parse()
 		.unwrap_or_else(|_| syn::Ident::new(&crate::count(), input.span()));
 	
@@ -142,11 +142,11 @@ pub(crate) fn parse_back(
 		content.push(crate::ParseReactive::parse(&braces, None, reactive)?)
 	}
 	
-	Ok(Some(Box::new(Back { token, mut0, back, build, content })))
+	Ok(Some(Box::new(Back { token, mut_, back, build, content })))
 }
 
 pub(crate) fn expand_back(
-	Back { token: _, mut0, back, build, content }: Back,
+	Back { token: _, mut_, back, build, content }: Back,
 	 objects: &mut TokenStream,
 	builders: &mut Vec<crate::Builder>,
 	settings: &mut TokenStream,
@@ -154,7 +154,7 @@ pub(crate) fn expand_back(
 	   attrs: Vec<syn::Attribute>,
 	   right: TokenStream,
 ) {
-	let left = quote![#(#attrs)* let #mut0 #back =];
+	let left = quote![#(#attrs)* let #mut_ #back =];
 	
 	let index = if build.is_some() {
 		#[cfg(feature = "builder-mode")]
@@ -181,7 +181,7 @@ pub(crate) fn expand_back(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn expand(
-	Prop { mut attrs, prop, by_ref, mut0, mode }: Prop,
+	Prop { mut attrs, prop, by_ref, mut_, mode }: Prop,
 	 objects: &mut TokenStream,
 	builders: &mut Vec<crate::Builder>,
 	settings: &mut TokenStream,
@@ -237,7 +237,7 @@ pub(crate) fn expand(
 			return None
 		}
 		Mode::Field(at, mut value) => {
-			if let Some(at) = at { crate::try_bind(objects, bindings, &mut value, at) }
+			if let Some(at) = at { crate::try_bind(at, objects, bindings, &mut value) }
 			return Some(quote![#(#pattrs)* #(#attrs)* #(#assignee.)* #prop = #value;])
 		}
 		Mode::Method { span, args, back } => if prop.segments.len() == 1 {
@@ -246,7 +246,7 @@ pub(crate) fn expand(
 		} else {
 			let assignee = crate::span_to(assignee, span);
 			let args = try_bind(objects, bindings, args);
-			(quote![#prop(#by_ref #mut0 #(#assignee).*, #(#args),*)], back)
+			(quote![#prop(#by_ref #mut_ #(#assignee).*, #(#args),*)], back)
 		}
 		Mode::FnField { args, back } => {
 			let args = try_bind(objects, bindings, args);
@@ -254,12 +254,12 @@ pub(crate) fn expand(
 		}
 	};
 	
-	let Some(back0) = back else {
+	let Some(back_) = back else {
 		return Some(quote![#(#pattrs)* #(#attrs)* #right;])
 	};
 	
 	crate::extend_attributes(&mut attrs, pattrs);
-	expand_back(*back0, objects, builders, settings, bindings, attrs, right);
+	expand_back(*back_, objects, builders, settings, bindings, attrs, right);
 	None
 }
 
@@ -273,7 +273,7 @@ fn try_bind<'a>(
 > {
 	args.into_iter().map(|(at, mut arg)| {
 		if let Some(at) = at {
-			crate::try_bind(objects, bindings, &mut arg, at);
+			crate::try_bind(at, objects, bindings, &mut arg);
 		} arg
 	})
 }

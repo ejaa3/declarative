@@ -6,9 +6,9 @@
 
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
-use crate::{content, property, Builder};
+use crate::{content, property};
 
-pub(crate) struct Item {
+pub struct Item {
 	  attrs: Vec<syn::Attribute>,
 	 object: Object,
 	  annex: Option<Box<Annex>>,
@@ -16,7 +16,7 @@ pub(crate) struct Item {
 	content: Vec<content::Content>,
 }
 
-pub(crate) fn parse(
+pub fn parse(
 	   input: syn::parse::ParseStream,
 	   attrs: Vec<syn::Attribute>,
 	reactive: bool,
@@ -51,11 +51,9 @@ pub(crate) fn parse(
 				annex = Some(parse_annex(&braces, &name, reactive)?);
 				continue
 			}
-			
 			content.push(crate::ParseReactive::parse(&braces, None, reactive)?)
 		}
 	}
-	
 	Ok(Item { attrs, object, annex, build, content })
 }
 
@@ -68,17 +66,17 @@ enum Object {
 impl ToTokens for Object {
 	fn to_tokens(&self, tokens: &mut TokenStream) {
 		match self {
-			Object::Expr(expr, mut0, name) => {
+			Object::Expr(expr, mut_, name) => {
 				expr.to_tokens(tokens);
-				mut0.to_tokens(tokens);
+				mut_.to_tokens(tokens);
 				name.to_tokens(tokens);
-			},
-			Object::Type(ty, mut0, name) => {
+			}
+			Object::Type(ty, mut_, name) => {
 				  ty.to_tokens(tokens);
-				mut0.to_tokens(tokens);
+				mut_.to_tokens(tokens);
 				name.to_tokens(tokens);
-			},
-			Object::Ref(idents) => for ident in idents { ident.to_tokens(tokens) },
+			}
+			Object::Ref(idents) => for ident in idents { ident.to_tokens(tokens) }
 		}
 	}
 }
@@ -114,14 +112,14 @@ impl syn::parse::Parse for Object {
 fn expand_object(
 	  object: &Object,
 	 objects: &mut TokenStream,
-	builders: &mut Vec<Builder>,
+	builders: &mut Vec<crate::Builder>,
 	   attrs: &[syn::Attribute],
 	 builder: bool,
 ) -> Option<usize> {
 	if !builder {
 		objects.extend(match object {
-			Object::Type(ty, mut0, name) => quote![#(#attrs)* let #mut0 #name = #ty::default();],
-			Object::Expr(call, mut0, name) => quote![#(#attrs)* let #mut0 #name = #call;],
+			Object::Type(ty, mut_, name) => quote![#(#attrs)* let #mut_ #name = #ty::default();],
+			Object::Expr(call, mut_, name) => quote![#(#attrs)* let #mut_ #name = #call;],
 			Object::Ref(_) => return None,
 		});
 		return None
@@ -129,18 +127,18 @@ fn expand_object(
 	
 	builders.push(match object {
 		#[cfg(feature = "builder-mode")]
-		Object::Type(ty, mut0, name) => Builder(
-			quote![#(#attrs)* let #mut0 #name =], quote![#ty =>], None
+		Object::Type(ty, mut_, name) => crate::Builder(
+			quote![#(#attrs)* let #mut_ #name =], quote![#ty =>], None
 		),
 		#[cfg(not(feature = "builder-mode"))]
-		Object::Type(ty, mut0, name) => quote![#(#attrs)* let #mut0 #name = #ty::default()],
+		Object::Type(ty, mut_, name) => quote![#(#attrs)* let #mut_ #name = #ty::default()],
 		
 		#[cfg(feature = "builder-mode")]
-		Object::Expr(expr, mut0, name) => Builder(
-			quote![#(#attrs)* let #mut0 #name =], quote![#expr], None
+		Object::Expr(expr, mut_, name) => crate::Builder(
+			quote![#(#attrs)* let #mut_ #name =], quote![#expr], None
 		),
 		#[cfg(not(feature = "builder-mode"))]
-		Object::Expr(expr, mut0, name) => quote![#(#attrs)* let #mut0 #name = #expr],
+		Object::Expr(expr, mut_, name) => quote![#(#attrs)* let #mut_ #name = #expr],
 		
 		Object::Ref(_) => return None,
 	});
@@ -151,7 +149,7 @@ fn expand_object(
 struct Annex {
 	 annex: syn::Path,
 	by_ref: Option<syn::Token![&]>,
-	  mut0: Option<syn::Token![mut]>,
+	  mut_: Option<syn::Token![mut]>,
 	  mode: AnnexMode,
 	tokens: TokenStream,
 	  back: Option<Box<property::Back>>,
@@ -166,7 +164,7 @@ fn parse_annex(
 ) -> syn::Result<Box<Annex>> {
 	let annex: syn::Path = input.parse()?;
 	
-	let (by_ref, mut0) = if annex.segments.len() > 1 {
+	let (by_ref, mut_) = if annex.segments.len() > 1 {
 		(input.parse()?, input.parse()?)
 	} else { (None, None) };
 	
@@ -194,14 +192,14 @@ fn parse_annex(
 		property::parse_back(input, reactive)?
 	} else { None };
 	
-	Ok(Box::new(Annex { annex, by_ref, mut0, mode, tokens, back }))
+	Ok(Box::new(Annex { annex, by_ref, mut_, mode, tokens, back }))
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn expand(
 	Item { mut attrs, object, annex, build, content }: Item,
 	 objects: &mut TokenStream,
-	builders: &mut Vec<Builder>,
+	builders: &mut Vec<crate::Builder>,
 	settings: &mut TokenStream,
 	bindings: &mut crate::Bindings,
 	  pattrs: &[syn::Attribute],
@@ -221,7 +219,7 @@ pub(crate) fn expand(
 		quote![#object #build], "missing #interpolation"
 	).into_compile_error()) };
 	
-	let Annex { annex, by_ref, mut0, mode, tokens, back } = *annex;
+	let Annex { annex, by_ref, mut_, mode, tokens, back } = *annex;
 	
 	if let Some(index) = builder {
 		if let Some(back) = back { return back.do_not_use(objects) }
@@ -247,7 +245,7 @@ pub(crate) fn expand(
 				quote![#(#assignee.)* #annex(#tokens)]
 			} else {
 				let assignee = crate::span_to(assignee, span);
-				quote![#annex(#by_ref #mut0 #(#assignee).*, #tokens)]
+				quote![#annex(#by_ref #mut_ #(#assignee).*, #tokens)]
 			}
 		};
 		property::expand_back(*back, objects, builders, settings, bindings, attrs, right)
@@ -261,7 +259,7 @@ pub(crate) fn expand(
 				quote![#(#attrs)* #(#assignee.)* #annex(#tokens);]
 			} else {
 				let assignee = crate::span_to(assignee, span);
-				quote![#(#attrs)* #annex(#by_ref #mut0 #(#assignee).*, #tokens);]
+				quote![#(#attrs)* #annex(#by_ref #mut_ #(#assignee).*, #tokens);]
 			}
 		});
 	}
@@ -274,7 +272,7 @@ impl<'a> From <&'a Object> for Name<'a> {
 		match &object {
 			Object::Expr(.., name) => Name::Slice([name]),
 			Object::Type(.., name) => Name::Slice([name]),
-			Object::Ref(ref0) => Name::Vec(ref0.iter().collect()),
+			Object::Ref(ref_) => Name::Vec(ref_.iter().collect()),
 		}
 	}
 }

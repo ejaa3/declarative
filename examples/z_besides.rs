@@ -61,19 +61,6 @@ impl Besides {
 		// the following are not full paths:
 		method_generic::<()>; 'back { unwrap; }
 		method_generic_arg::<Option<()>>: Some(()) 'back { unwrap; }
-		
-		// you can clone without `.clone()`
-		// `String` is clonable like `Rc`, so be explicit:
-		string = clone![second as Rc::clone(&first); second]
-		
-		// if you need many clones:
-		string = clone! {
-			 first, // as `first.clone()` (it is not explicit)
-			second as String::clone(&first),
-			 third as first.to_string(),
-			triple as [first.as_str(), &second, &third].join(" ");
-			triple.into() // final value
-		}
 	}
 	
 	// external attributes apply internally (doc comments are attributes):
@@ -141,8 +128,4 @@ impl Besides {
 	}
 }]
 
-fn main() {
-	let first = Rc::from(String::from("Hello world!"));
-	expand_view_here! { }
-	println!("{}", object.string)
-}
+fn main() { expand_view_here!() }

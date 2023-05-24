@@ -7,7 +7,6 @@
 use declarative::{builder_mode, clone}; // we need to clone
 use gtk::{glib, prelude::*};
 
-#[derive(Debug)]
 // let's try to create a reactive view using messages:
 enum Msg { Increase, Decrease } // or the Elm architecture
 
@@ -20,15 +19,10 @@ fn update_state(state: &mut State, msg: Msg) {
 	}
 }
 
-macro_rules! send { // a macro to log send errors
-	($expr:expr => $sender:ident) => {
-		$sender.send($expr).unwrap_or_else(
-			move |error| glib::g_critical!("c_from_messages", "{error}")
-		)
-	};
-}
+// syntactic sugar for sending messages:
+macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send($msg).unwrap()] }
 
-#[declarative::view {
+#[declarative::view { // you may prefer to see the `start()` function first
 	gtk::ApplicationWindow window !{
 		application: app
 		title: "Count unchanged"
@@ -54,18 +48,18 @@ macro_rules! send { // a macro to log send errors
 			}
 			
 			gtk::Button::with_label("Increase") #attach(&#, 0, 1, 1, 1) {
-				// we clone the sender to be able to use it with the other button:
-				connect_clicked: clone![sender; move |_| send!(Msg::Increase => sender)]
+				// we clone `tx` to be able to use it with the other button:
+				connect_clicked: clone![tx; move |_| send!(Msg::Increase => tx)]
 				// you can see that `clone![]` allows you to put the expression
 				// to be assigned (in this case a closure) after the semicolon
 			}
 			
 			gtk::Button::with_label("Decrease") #attach(&#, 1, 1, 1, 1) {
-				connect_clicked: move |_| send!(Msg::Decrease => sender)
+				connect_clicked: move |_| send!(Msg::Decrease => tx)
 			}
 		}
 		
-		// the following binding closure requires `window` because of the 'bind above:
+		// the following closure requires `window` because of the 'bind above:
 		@update_view = { // this brace is an expression
 			// we clone `window` to move the clone to the closure and thus be able to return `window`:
 			clone![window]; move |state: &State| bindings!()
@@ -74,26 +68,26 @@ macro_rules! send { // a macro to log send errors
 	}
 }]
 
-fn window(app: &gtk::Application) -> gtk::ApplicationWindow {
+fn start(app: &gtk::Application) {
 	let mut state = State { count: 0 }; // we create the state
 	
-	// https://docs.gtk.org/glib/struct.MainContext.html
-	let (sender, receiver) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
+	// about the following: https://docs.gtk.org/glib/struct.MainContext.html
+	let (tx, rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
 	// looks like https://doc.rust-lang.org/book/ch16-02-message-passing.html
 	
 	expand_view_here! { }
 	
-	receiver.attach(None, move |msg| { // `state` lives in this closure
+	rx.attach(None, move |msg| { // `state` lives in this closure
 		update_state(&mut state, msg); // we update the state
 		update_view(&state); // and now the view
 		glib::Continue(true) // this is for glib to keep this closure alive
 	});
 	
-	window
+	window.present()
 }
 
 fn main() -> glib::ExitCode {
 	let app = gtk::Application::default();
-	app.connect_activate(move |app| window(app).present());
+	app.connect_activate(start);
 	app.run()
 }

@@ -8,7 +8,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use crate::{conditional as cond, item, property as prop};
 
-pub(crate) enum Content {
+pub enum Content {
 	Property  (Box<prop::Prop>),
 	Extension (Box<Extension>),
 	Built     { object: bool, span: proc_macro2::Span, built: Box<Built> },
@@ -19,22 +19,22 @@ pub(crate) enum Content {
 	Binding   (Box<Expr>),
 }
 
-pub(crate) struct Extension {
+pub struct Extension {
 	 attrs: Vec<syn::Attribute>,
 	   ext: syn::Path,
 	tokens: syn::buffer::TokenBuffer,
 	  back: Option<Box<prop::Back>>,
 }
 
-pub(crate) struct Built {
+pub struct Built {
 	   semi: Option<syn::Token![;]>,
 	content: Vec<Content>,
 }
 
-pub(crate) struct Bind {
+pub struct Bind {
 	  attrs: Vec<syn::Attribute>,
 	  token: syn::Lifetime,
-	    now: Option<syn::Token![!]>,
+	   init: Option<syn::Token![!]>,
 	binding: Binding,
 }
 
@@ -44,19 +44,19 @@ enum Binding {
 	Props (Vec<prop::Prop>),
 }
 
-pub(crate) struct BindColon {
+pub struct BindColon {
 	attrs: Vec<syn::Attribute>,
 	token: syn::Lifetime,
 	colon: syn::Token![:],
-	  if0: syn::Token![if],
+	  if_: syn::Token![if],
 	 cond: syn::Expr,
 	props: Vec<cond::Inner<Box<prop::Prop>>>,
 }
 
-pub(crate) struct Expr {
+pub struct Expr {
 	attrs: Vec<syn::Attribute>,
 	   at: syn::Token![@],
-	 mut0: Option<syn::Token![mut]>,
+	 mut_: Option<syn::Token![mut]>,
 	 name: syn::Ident,
 	equal: syn::Token![=],
 	 expr: syn::Expr,
@@ -95,15 +95,15 @@ impl crate::ParseReactive for Content {
 				} else if let Ok(colon) = input.parse::<syn::Token![:]>() {
 					Ok(Content::BindColon(Box::new(BindColon {
 						attrs, token, colon,
-						  if0: input.parse::<syn::Token![if]>()?,
+						  if_: input.parse::<syn::Token![if]>()?,
 						 cond: input.parse()?,
 						props: crate::parse_vec(input, false)?,
 					})))
 				} else {
 					Ok(Content::Bind(Box::new(Bind {
-						attrs, token, now: input.parse()?,
+						attrs, token, init: input.parse()?,
 						binding: if input.peek(syn::Token![if]) {
-							Binding::If(cond::parse_ifs(input, false)?)
+							Binding::If(cond::parse_vec(input, false)?)
 						} else if input.peek(syn::Token![match]) {
 							Binding::Match(crate::ParseReactive::parse(input, None, false)?)
 						} else {
@@ -127,7 +127,7 @@ impl crate::ParseReactive for Content {
 				}
 				Ok(Content::Binding(Box::new(Expr {
 					attrs, at,
-					 mut0: input.parse()?,
+					 mut_: input.parse()?,
 					 name: input.parse()?,
 					equal: input.parse()?,
 					 expr: input.parse()?,
@@ -157,10 +157,7 @@ impl crate::ParseReactive for Content {
 	}
 }
 
-pub(crate) fn parse_vec(
-	   input: syn::parse::ParseStream,
-	reactive: bool
-) -> syn::Result<Vec<Content>> {
+pub fn parse_vec(input: syn::parse::ParseStream, reactive: bool) -> syn::Result<Vec<Content>> {
 	let mut props = vec![];
 	while !input.is_empty() {
 		props.push(crate::ParseReactive::parse(input, None, reactive)?)
@@ -236,7 +233,7 @@ pub(crate) fn expand(
 			*inner, objects, builders, settings, bindings, None, name
 		),
 		Content::BindColon(bind_colon) => {
-			let BindColon { attrs, token, colon, if0, cond, props } = *bind_colon;
+			let BindColon { attrs, token, colon, if_, cond, props } = *bind_colon;
 			let block = &mut TokenStream::new();
 			
 			for inner in props { cond::expand(
@@ -244,49 +241,49 @@ pub(crate) fn expand(
 			) }
 			
 			bindings.tokens.push(quote![#token #colon]);
-			bindings.stream.extend(quote![#(#pattrs)* #(#attrs)* #if0 #cond { #block }]);
+			bindings.stream.extend(quote![#(#pattrs)* #(#attrs)* #if_ #cond { #block }]);
 			settings.extend(quote![#(#pattrs)* #(#attrs)* { #block }]);
 		}
 		Content::Bind(bind) => {
-			let Bind { attrs, token, now, binding } = *bind;
-			bindings.tokens.push(quote![#token #now]);
-			let now = now.is_some();
+			let Bind { attrs, token, init, binding } = *bind;
+			bindings.tokens.push(quote![#token #init]);
+			let init = init.is_some();
 			
 			match binding {
-				Binding::If(ifs) => {
-					if now { settings.extend(quote![#(#pattrs)* #(#attrs)*]); }
+				Binding::If(if_vec) => {
+					if init { settings.extend(quote![#(#pattrs)* #(#attrs)*]); }
 					bindings.stream.extend(quote![#(#pattrs)* #(#attrs)*]);
 					
-					for cond::If { else0, if0, expr, inner } in ifs {
+					for cond::If { else_, if_, expr, inner } in if_vec {
 						let block = &mut TokenStream::new();
 						
 						for inner in inner { cond::expand(
 							inner, objects, builders, settings, bindings, Some(block), name
 						) }
 						
-						if now { settings.extend(quote![#else0 #if0 #expr { #block }]) };
-						bindings.stream.extend(quote![#else0 #if0 #expr { #block }])
+						if init { settings.extend(quote![#else_ #if_ #expr { #block }]) };
+						bindings.stream.extend(quote![#else_ #if_ #expr { #block }])
 					}
 				}
-				Binding::Match(match0) => {
-					if now { settings.extend(quote![#(#pattrs)* #(#attrs)*]); }
+				Binding::Match(match_) => {
+					if init { settings.extend(quote![#(#pattrs)* #(#attrs)*]); }
 					bindings.stream.extend(quote![#(#pattrs)* #(#attrs)*]);
 					
-					let cond::Match { token, expr, arms } = *match0;
+					let cond::Match { token, expr, arms } = *match_;
 					
 					let body = TokenStream::from_iter(arms.into_iter()
 						.map(|cond::Arm { attrs, pat, guard, arrow, body }| {
 							let block = &mut TokenStream::new();
-							let (if0, expr) = guard.map(|boxed| *boxed).unzip();
+							let (if_, expr) = guard.as_deref().map(|(a, b)| (a, b)).unzip();
 							
 							for inner in body { cond::expand(
 								inner, objects, builders, settings, bindings, Some(block), name
 							) }
 							
-							quote![#(#attrs)* #pat #if0 #expr #arrow { #block }]
+							quote![#(#attrs)* #pat #if_ #expr #arrow { #block }]
 						}));
 					
-					if now { settings.extend(quote![#token #expr { #body }]) };
+					if init { settings.extend(quote![#token #expr { #body }]) };
 					bindings.stream.extend(quote![#token #expr { #body }])
 				}
 				Binding::Props(props) => {
@@ -296,16 +293,16 @@ pub(crate) fn expand(
 						))
 						.collect();
 					
-					if now { settings.extend(quote![#(#pattrs)* #(#attrs)* { #stream }]); }
+					if init { settings.extend(quote![#(#pattrs)* #(#attrs)* { #stream }]); }
 					bindings.stream.extend(quote![#(#pattrs)* #(#attrs)* { #stream }])
 				}
 			}
 		}
 		Content::Binding(binding) => {
-			let Expr { attrs, at, mut0, name, equal, mut expr } = *binding;
-			crate::try_bind(objects, bindings, &mut expr, at);
+			let Expr { attrs, at, mut_, name, equal, mut expr } = *binding;
+			crate::try_bind(at, objects, bindings, &mut expr);
 			
-			settings.extend(quote![#(#pattrs)* #(#attrs)* let #mut0 #name #equal #expr;])
+			settings.extend(quote![#(#pattrs)* #(#attrs)* let #mut_ #name #equal #expr;])
 		}
 	}
 }

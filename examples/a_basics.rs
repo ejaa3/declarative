@@ -13,15 +13,15 @@ fn main() -> glib::ExitCode {
 		String::from(greet) var_name { } // let's call this “item”
 	} // logically the block expands here
 	
-	println!("[INNER]\n{var_name}\n");
+	println!("[inner syntax]\n{var_name}\n");
 	
-	outer();
+	outer_syntax();
 	builder_mode()
 }
 
 fn add_five(string: &mut String) { // this function is a “chunk” of view
 	declarative::block! {
-		// to edit an argument or variable before expansion, use `ref`:
+		// to edit an argument or variable before macro expansion, use `ref`:
 		ref string { push_str: "5, " }
 	}
 }
@@ -31,8 +31,7 @@ fn add_five(string: &mut String) { // this function is a “chunk” of view
 	String mut main_string { // with `mut` you can mutate here
 		
 		// this is a method call:
-		push_str: &first // `first` is another item (at the end of the view)
-		// although `push_str()` is not a setter, but let's assume
+		push_str: &first // `first` is another item (at the end of this view)
 		
 		// this is a composition:
 		String mut { // no need to name items (a name is generated)
@@ -57,12 +56,12 @@ fn add_five(string: &mut String) { // this function is a “chunk” of view
 			// I have not been able to display the error in the parentheses
 		}
 		
-		// @extensions are useful for sharing a view edit:
+		// @extensions are useful for sharing a view edit; we are @extending `main_string`:
 		@add_five(&mut #) // remember the `add_five()` function, after `main()`
 		// unlike an interpolation, it cannot go before a brace
 		
 		// you can also compose with `ref`:
-		ref pre_view #push_str(&#) { push_str: "6, " }
+		ref string_before_view #push_str(&#) { push_str: "6, " }
 		
 		// by coincidence we can use `ref` with `first`:
 		ref first #push_str(&#) {
@@ -82,17 +81,18 @@ fn add_five(string: &mut String) { // this function is a “chunk” of view
 			expand_view_here! { } // here the third view is expanded (reason below)
 			ten
 		}
+		@add_eleven_and_twelve(&mut #) // this extension is like `add_five`, but more on that later
 	}
 }]
 
 #[declarative::view { // a third view
-	str::as_ref("10") ten { } // could be "10" without `str::as_ref()`
+	str::as_ref("10, ") ten { } // could be "10" without `str::as_ref()`
 }]
 
-fn outer() {
-	println!("[OUTER]");
+fn outer_syntax() {
+	println!("[outer syntax]");
 	
-	let mut pre_view = String::new();
+	let mut string_before_view = String::new();
 	expand_view_here! { } // here we put the string items of the first view
 	main_string.push_str("8,"); // logically you can edit after view
 	
@@ -101,6 +101,20 @@ fn outer() {
 	// the first view is consumed first, and the last is consumed last
 	
 	println!("{main_string} {end}");
+}
+
+// rust allows you to call macros `so!()`, `so![]` or `so!{}`, and the same goes for
+// attribute macros, so for editing long extensions the following syntax is recommended:
+#[declarative::view(ref string {
+	push_str: "11, "
+	
+	String mut #push_str(&#) {
+		push_str: "12"
+	}
+})]
+
+fn add_eleven_and_twelve(string: &mut String) {
+	expand_view_here! { }
 }
 
 // you can use the “builder mode” with the exclamation mark before the brace,
@@ -133,7 +147,7 @@ macro_rules! builder_mode {
 
 // let's exemplify the second and third case:
 #[declarative::view { // (the first and the last are almost the same)
-	gtk::ApplicationWindow window !{ // outer builder mode (type only)
+	gtk::ApplicationWindow !{ // outer builder mode (type only)
 		application: app
 		title: "Title"
 		

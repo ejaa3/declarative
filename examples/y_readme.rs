@@ -7,17 +7,9 @@
 use declarative::{builder_mode, clone, view};
 use gtk::{glib, prelude::*};
 
-#[derive(Debug)]
+macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send($msg).unwrap()] }
+
 enum Msg { Increase, Decrease }
-
-struct State { count: i32 }
-
-fn update_state(state: &mut State, msg: Msg) {
-    match msg {
-        Msg::Increase => state.count = state.count.wrapping_add(1),
-        Msg::Decrease => state.count = state.count.wrapping_sub(1),
-    }
-}
 
 #[view {
     gtk::ApplicationWindow window !{
@@ -35,51 +27,44 @@ fn update_state(state: &mut State, msg: Msg) {
             margin_end: 6 #:
 
             gtk::Label #append(&#) {
-                'bind! set_label: &format!("The count is: {}", state.count)
+                'bind! set_label: &format!("The count is: {count}")
             }
 
             gtk::Button::with_label("Increase") #append(&#) {
-                connect_clicked: clone! {
-                    sender; move |_| send!(Msg::Increase => sender)
-                }
+                connect_clicked: clone![tx; move |_| send!(Msg::Increase => tx)]
             }
 
             gtk::Button::with_label("Decrease") #append(&#) {
-                connect_clicked: move |_| send!(Msg::Decrease => sender)
+                connect_clicked: move |_| send!(Msg::Decrease => tx)
             }
 
-            @update_view = move |state: &State| bindings!()
+            @update_view = move |count| bindings!()
         }
     }
 }]
 
-fn window(app: &gtk::Application) -> gtk::ApplicationWindow {
-    let mut state = State { count: 0 };
-    let (sender, receiver) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
+fn start(app: &gtk::Application) {
+    let (tx, rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
+    let mut count = 0; // the state
 
     expand_view_here! { }
 
-    receiver.attach(None, move |msg| {
-        update_state(&mut state, msg);
-        update_view(&state);
+    let update_count = |count: &mut u8, msg| match msg {
+        Msg::Increase => *count = count.wrapping_add(1),
+        Msg::Decrease => *count = count.wrapping_sub(1),
+    };
+
+    rx.attach(None, move |msg| {
+        update_count(&mut count, msg);
+        update_view(count);
         glib::Continue(true)
     });
 
-    window
+    window.present()
 }
 
 fn main() -> glib::ExitCode {
     let app = gtk::Application::default();
-    app.connect_activate(move |app| window(app).present());
+    app.connect_activate(start);
     app.run()
 }
-
-macro_rules! send {
-    ($expr:expr => $sender:ident) => {
-        $sender.send($expr).unwrap_or_else(
-            move |error| glib::g_critical!("example", "{error}")
-        )
-    };
-}
-
-use send;

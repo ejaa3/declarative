@@ -75,30 +75,31 @@ pub fn block(stream: TokenStream) -> TokenStream {
 	TokenStream::from(expand(syn::parse_macro_input!(stream)))
 }
 
-struct Visitor { name: &'static str, stream: TokenStream2 }
+struct Visitor { placeholder: &'static str, stream: TokenStream2 }
 
 impl VisitMut for Visitor {
 	fn visit_expr_mut(&mut self, node: &mut syn::Expr) {
-		if self.name.is_empty() { return }
+		if self.placeholder.is_empty() { return }
 		
 		if let syn::Expr::Macro(mac) = node {
-			if mac.mac.path.is_ident(self.name) {
-				self.name = "";
+			if mac.mac.path.is_ident(self.placeholder) {
+				self.placeholder = "";
 				let stream = &self.stream;
-				return *node = syn::Expr::Verbatim(syn::parse_quote![{#stream}]);
+				return *node = syn::Expr::Verbatim(quote![{#stream}]);
 			}
 		}
 		syn::visit_mut::visit_expr_mut(self, node);
 	}
+	
 	fn visit_stmt_mut(&mut self, node: &mut syn::Stmt) {
-		if self.name.is_empty() { return }
+		if self.placeholder.is_empty() { return }
 		
 		if let syn::Stmt::Macro(mac) = node {
-			if mac.mac.path.is_ident(self.name) {
-				self.name = "";
+			if mac.mac.path.is_ident(self.placeholder) {
+				self.placeholder = "";
 				let stream = &self.stream;
 				return *node = syn::Stmt::Expr(
-					syn::Expr::Verbatim(syn::parse_quote![#stream]), None
+					syn::Expr::Verbatim(quote![#stream]), None
 				);
 			}
 		}
@@ -126,24 +127,23 @@ pub fn view(stream: TokenStream, code: TokenStream) -> TokenStream {
 	let stream = expand(syn::parse_macro_input!(stream));
 	let syntax_tree = &mut syn::parse2(TokenStream2::from(code)).unwrap();
 	
-	let mut visitor = Visitor { name: "expand_view_here", stream };
+	let mut visitor = Visitor { placeholder: "expand_view_here", stream };
 	visitor.visit_file_mut(syntax_tree);
 	
-	if !visitor.name.is_empty() {
+	if !visitor.placeholder.is_empty() {
 		panic!("the view must be consumed with the macro placeholder `expand_view_here!`")
 	}
 	TokenStream::from(quote![#syntax_tree])
 }
 
-thread_local![static COUNT: std::cell::RefCell<usize> = {
-	std::cell::RefCell::new(0)
-}];
-
-fn count() -> String {
-	COUNT.with(move |cell| {
+fn count() -> compact_str::CompactString {
+	use std::cell::RefCell;
+	thread_local![static COUNT: RefCell<usize> = RefCell::new(0)];
+	
+	COUNT.with(|cell| {
 		let count = *cell.borrow();
 		*cell.borrow_mut() = count.wrapping_add(1);
-		format!("_declarative_{}", count)
+		compact_str::format_compact!("_declarative_{}", count)
 	})
 }
 
@@ -189,8 +189,8 @@ fn extend_attributes(attrs: &mut Vec<syn::Attribute>, pattrs: &[syn::Attribute])
 }
 
 fn find_pound(rest: &mut syn::buffer::Cursor, outer: &mut TokenStream2, name: &[&syn::Ident]) -> bool {
-	while let Some((tt, next)) = rest.token_tree() {
-		match tt {
+	while let Some((token_tree, next)) = rest.token_tree() {
+		match token_tree {
 			TokenTree::Group(group) => {
 				let delimiter = group.delimiter();
 				let (mut into, _, next) = rest.group(delimiter).unwrap();
@@ -213,23 +213,22 @@ fn find_pound(rest: &mut syn::buffer::Cursor, outer: &mut TokenStream2, name: &[
 						continue;
 					}
 				}
-				let name = crate::span_to(name, punct.span());
+				let name = span_to(name, punct.span());
 				outer.extend(quote![#(#name).*]);
 				outer.extend(next.token_stream());
 				return true
 			} else { outer.extend(quote![#punct]); *rest = next; }
 			
-			tt => { outer.extend(quote![#tt]); *rest = next; }
+			token_tree => { outer.extend(quote![#token_tree]); *rest = next; }
 		}
 	}
 	false
 }
 
-fn try_bind(
-	 objects: &mut TokenStream2,
-	bindings: &mut crate::Bindings,
-	    expr: &mut syn::Expr,
-	      at: syn::Token![@],
+fn try_bind(at: syn::Token![@],
+       objects: &mut TokenStream2,
+      bindings: &mut Bindings,
+          expr: &mut syn::Expr,
 ) {
 	if std::mem::take(&mut bindings.tokens).is_empty() {
 		return objects.extend(syn::Error::new(
@@ -238,10 +237,10 @@ fn try_bind(
 	}
 	
 	let stream = std::mem::take(&mut bindings.stream);
-	let mut visitor = Visitor { name: "bindings", stream };
+	let mut visitor = Visitor { placeholder: "bindings", stream };
 	visitor.visit_expr_mut(expr);
 	
-	if !visitor.name.is_empty() {
+	if !visitor.placeholder.is_empty() {
 		objects.extend(syn::Error::new(
 			at.span, "bindings must be consumed with the macro placeholder `bindings!`"
 		).to_compile_error())

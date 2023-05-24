@@ -12,7 +12,7 @@ edition     = '2021'
 keywords    = ['GUI', 'macro', 'reactive', 'view']
 license     = 'Apache-2.0 OR MIT'
 repository  = 'https://github.com/ejaa3/declarative/'
-version     = '0.3.1'
+version     = '0.3.2'
 
 [package]
 include     = ['/LICENSES', '/src', 'Cargo.toml', 'README.md']

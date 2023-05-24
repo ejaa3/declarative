@@ -63,27 +63,23 @@ fn outer_extension(stack: &gtk::Stack, name: &str, title: &str) -> gtk::Label {
 				
 				gtk::Label !{
 					#add_child(&#) 'back {
-						@inner_extension(&#) // you can extend inside 'back
-						'bind set_title: &format!("Changes: {changes}")
+						@inner_extension(&#) // you can @extend what `add_child()` returns
+						'bind set_title: &format!("Changes: {}", changes.get())
 					}
 					label: "'back supports reactivity!"
 				}
 				
+				// you can also edit the return of an @extension with 'back:
 				@outer_extension(&#, "fifth_name", "Fifth") 'back { set_label: "From an extension" }
 				
 				@outer_extension(&#, "sixth_name", "Sixth") 'back {
-					'bind set_label: &format!("Changes (from an extension): {changes}")
+					'bind set_label: &format!("Changes (from an extension): {}", changes.get())
 				}
 				
-				@update_view = move |changes: u8| bindings!()
-				
-				connect_visible_child_notify: move |_| {
+				connect_visible_child_notify: @move |_| {
 					changes.set(changes.get().wrapping_add(1));
-					update_view(changes.get())
+					bindings! { }
 				}
-				
-				// it is possible that in the future 'back may also destructure, or call a
-				// returned functional, or assign a returned mutable reference, and so on
 			}
 		}
 	}
@@ -91,10 +87,12 @@ fn outer_extension(stack: &gtk::Stack, name: &str, title: &str) -> gtk::Label {
 
 fn main() -> glib::ExitCode {
 	let app = gtk::Application::default();
-	app.connect_activate(move |app| {
+	
+	app.connect_activate(|app| {
 		let changes = std::cell::Cell::new(0_u8);
 		expand_view_here! { }
 		window.present()
 	});
+	
 	app.run()
 }

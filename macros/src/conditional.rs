@@ -6,15 +6,15 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use crate::{property, content};
+use crate::{property, content, ParseReactive};
 
-pub(crate) enum Inner<T> {
+pub enum Inner<T> {
 	If    (Vec<syn::Attribute>, Vec<If<T>>),
 	Match (Vec<syn::Attribute>, Box<Match<T>>),
 	Prop  (T),
 }
 
-impl<T: Expand> crate::ParseReactive for Inner<T> {
+impl<T: Expand> ParseReactive for Inner<T> {
 	fn parse(input: syn::parse::ParseStream,
 	         attrs: Option<Vec<syn::Attribute>>,
 	      reactive: bool,
@@ -24,10 +24,10 @@ impl<T: Expand> crate::ParseReactive for Inner<T> {
 		
 		if input.peek(syn::Token![if]) {
 			let attrs = attrs.map_or_else(map, Result::Ok)?;
-			Ok(Inner::If(attrs, parse_ifs(input, reactive)?))
+			Ok(Inner::If(attrs, parse_vec(input, reactive)?))
 		} else if input.peek(syn::Token![match]) {
 			let attrs = attrs.map_or_else(map, Result::Ok)?;
-			Ok(Inner::Match(attrs, crate::ParseReactive::parse(input, None, reactive)?))
+			Ok(Inner::Match(attrs, ParseReactive::parse(input, None, reactive)?))
 		} else {
 			Ok(Inner::Prop(T::parse(input, attrs, reactive)?))
 		}
@@ -44,22 +44,22 @@ pub(crate) fn expand<T: Expand>(
 	    name: &[&syn::Ident],
 ) {
 	match inner {
-		Inner::If(attrs, ifs) => if let Some(block) = block {
+		Inner::If(attrs, if_vec) => if let Some(block) = block {
 			block.extend(quote![#(#attrs)*]);
 			
-			for If { else0, if0, expr, inner } in ifs {
+			for If { else_, if_, expr, inner } in if_vec {
 				let stream = &mut TokenStream::new();
 				
 				for inner in inner { expand(
 					inner, objects, builders, settings, bindings, Some(stream), name
 				) }
 				
-				block.extend(quote![#else0 #if0 #expr { #stream }]);
+				block.extend(quote![#else_ #if_ #expr { #stream }]);
 			}
 		} else {
 			settings.extend(quote![#(#attrs)*]);
 			
-			for If { else0, if0, expr, inner } in ifs {
+			for If { else_, if_, expr, inner } in if_vec {
 				let  objects = &mut TokenStream::new();
 				let builders = &mut vec![];
 				let    setup = &mut TokenStream::new();
@@ -69,11 +69,11 @@ pub(crate) fn expand<T: Expand>(
 				) }
 				
 				let builders = builders.iter().rev();
-				settings.extend(quote![#else0 #if0 #expr { #objects #(#builders;)* #setup #block }]);
+				settings.extend(quote![#else_ #if_ #expr { #objects #(#builders;)* #setup #block }]);
 			}
 		}
-		Inner::Match(attrs, match0) => {
-			let Match { token, expr, arms } = *match0;
+		Inner::Match(attrs, match_) => {
+			let Match { token, expr, arms } = *match_;
 			
 			if let Some(block) = block {
 				block.extend(quote![#(#attrs)*]);
@@ -81,13 +81,13 @@ pub(crate) fn expand<T: Expand>(
 				let body = TokenStream::from_iter(arms.into_iter()
 					.map(|Arm { attrs, pat, guard, arrow, body }| {
 						let stream = &mut TokenStream::new();
-						let (if0, expr) = guard.map(|boxed| *boxed).unzip();
+						let (if_, expr) = guard.as_deref().map(|(a, b)| (a, b)).unzip();
 						
 						for inner in body { expand(
 							inner, objects, builders, settings, bindings, Some(stream), name
 						) }
 						
-						quote![#(#attrs)* #pat #if0 #expr #arrow { #stream }]
+						quote![#(#attrs)* #pat #if_ #expr #arrow { #stream }]
 					}));
 				
 				block.extend(quote![#token #expr { #body }])
@@ -95,7 +95,7 @@ pub(crate) fn expand<T: Expand>(
 				settings.extend(quote![#(#attrs)*]);
 				
 				let body = arms.into_iter().map(|Arm { attrs, pat, guard, arrow, body }| {
-					let (if0, expr) = guard.map(|boxed| *boxed).unzip();
+					let (if_, expr) = guard.as_deref().map(|(a, b)| (a, b)).unzip();
 					let  objects = &mut TokenStream::new();
 					let builders = &mut vec![];
 					let    setup = &mut TokenStream::new();
@@ -106,7 +106,7 @@ pub(crate) fn expand<T: Expand>(
 					
 					let builders = builders.iter().rev();
 					
-					quote![#(#attrs)* #pat #if0 #expr #arrow {
+					quote![#(#attrs)* #pat #if_ #expr #arrow {
 						#objects #(#builders;)* #setup #block
 					}]
 				});
@@ -121,7 +121,7 @@ pub(crate) fn expand<T: Expand>(
 	}
 }
 
-pub(crate) trait Expand: crate::ParseReactive {
+pub(crate) trait Expand: ParseReactive {
 	fn expand(self, name: &[&syn::Ident],
 		 objects: &mut TokenStream, builders: &mut Vec<crate::Builder>,
 		settings: &mut TokenStream, bindings: &mut crate::Bindings,
@@ -156,45 +156,44 @@ impl Expand for content::Content {
 	}
 }
 
-pub(crate) struct If<T> {
-	pub else0: Option<syn::Token![else]>,
-	pub   if0: Option<syn::Token![if]>,
+pub struct If<T> {
+	pub else_: Option<syn::Token![else]>,
+	pub   if_: Option<syn::Token![if]>,
 	pub  expr: Option<Box<syn::Expr>>,
 	pub inner: Vec<Inner<T>>,
 }
 
-impl<T: Expand> crate::ParseReactive for If<T> {
+impl<T: Expand> ParseReactive for If<T> {
 	fn parse(input: syn::parse::ParseStream,
 	        _attrs: Option<Vec<syn::Attribute>>,
 	      reactive: bool,
 	) -> syn::Result<Self> {
-		let else0 = input.parse()?;
-		let if0: Option<_> = input.parse()?;
-		let expr = if if0.is_some() {
+		let else_ = input.parse()?;
+		let if_: Option<_> = input.parse()?;
+		let expr = if if_.is_some() {
 			Some(Box::new(input.call(syn::Expr::parse_without_eager_brace)?))
 		} else { None };
 		
 		let inner = crate::parse_vec(input, reactive)?;
-		
-		Ok(If { else0, if0, expr, inner })
+		Ok(If { else_, if_, expr, inner })
 	}
 }
 
-pub(crate) fn parse_ifs<T: crate::ParseReactive>(
+pub(crate) fn parse_vec<T: ParseReactive>(
 	input: syn::parse::ParseStream, reactive: bool
 ) -> syn::Result<Vec<T>> {
-	let mut ifs = vec![T::parse(input, None, reactive)?];
-	while input.peek(syn::Token![else]) { ifs.push(T::parse(input, None, reactive)?); }
-	Ok(ifs)
+	let mut vec = vec![T::parse(input, None, reactive)?];
+	while input.peek(syn::Token![else]) { vec.push(T::parse(input, None, reactive)?); }
+	Ok(vec)
 }
 
-pub(crate) struct Match<T> {
+pub struct Match<T> {
 	pub token: syn::Token![match],
 	pub  expr: syn::Expr,
 	pub  arms: Vec<Arm<T>>,
 }
 
-impl<T: Expand> crate::ParseReactive for Box<Match<T>> {
+impl<T: Expand> ParseReactive for Box<Match<T>> {
 	fn parse(input: syn::parse::ParseStream,
 	        _attrs: Option<Vec<syn::Attribute>>,
 	     _reactive: bool,
@@ -208,7 +207,7 @@ impl<T: Expand> crate::ParseReactive for Box<Match<T>> {
 	}
 }
 
-pub(crate) struct Arm<T> {
+pub struct Arm<T> {
 	pub attrs: Vec<syn::Attribute>,
 	pub   pat: syn::Pat,
 	pub guard: Option<Box<(syn::Token![if], syn::Expr)>>,
@@ -222,7 +221,7 @@ impl<T: Expand> syn::parse::Parse for Arm<T> {
 			attrs: input.call(syn::Attribute::parse_outer)?,
 			  pat: input.call(syn::Pat::parse_multi_with_leading_vert)?,
 			guard: input.parse::<syn::Token![if]>().ok()
-				.map(|if0| Ok::<_, syn::Error>(Box::new((if0, input.parse()?))))
+				.map(|if_| Ok::<_, syn::Error>(Box::new((if_, input.parse()?))))
 				.transpose()?,
 			arrow: input.parse()?,
 			 body: crate::parse_vec(input, false)?,
