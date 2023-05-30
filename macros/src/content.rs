@@ -4,42 +4,44 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use proc_macro2::TokenStream;
-use quote::quote;
+use proc_macro2::{Delimiter, Group, Punct, Spacing, TokenStream};
+use quote::{TokenStreamExt, ToTokens, quote};
 use crate::{conditional as cond, item, property as prop};
 
 pub enum Content {
-	Property  (Box<prop::Prop>),
+	 Property (Box<prop::Prop>),
 	Extension (Box<Extension>),
-	Built     { object: bool, span: proc_macro2::Span, built: Box<Built> },
-	Item      (Box<item::Item>),
-	Inner     (Box<cond::Inner<Content>>),
-	Bind      (Box<Bind>),
+	    Built { object: bool, tilde: syn::Token![~], built: Box<Built> },
+	     Item (Box<item::Item>),
+	    Inner (Box<cond::Inner<Content>>),
+	     Bind (Box<Bind>),
 	BindColon (Box<BindColon>),
-	Binding   (Box<Expr>),
+	  Binding (Box<Expr>),
 }
 
 pub struct Extension {
 	 attrs: Vec<syn::Attribute>,
-	   ext: syn::Path,
+	   ext: syn::TypePath,
+	 paren: syn::token::Paren,
 	tokens: syn::buffer::TokenBuffer,
 	  back: Option<Box<prop::Back>>,
 }
 
 pub struct Built {
-	   semi: Option<syn::Token![;]>,
+	no_auto: Option<syn::Token![~]>,
+	 penult: Content,
 	content: Vec<Content>,
 }
 
 pub struct Bind {
 	  attrs: Vec<syn::Attribute>,
 	  token: syn::Lifetime,
-	   init: Option<syn::Token![!]>,
+	   init: Option<syn::Token![@]>,
 	binding: Binding,
 }
 
 enum Binding {
-	If    (Vec<cond::If<prop::Prop>>),
+	   If (Vec<cond::If<prop::Prop>>),
 	Match (Box<cond::Match<prop::Prop>>),
 	Props (Vec<prop::Prop>),
 }
@@ -67,21 +69,15 @@ impl crate::ParseReactive for Content {
 	         attrs: Option<Vec<syn::Attribute>>,
 	      reactive: bool,
 	) -> syn::Result<Self> {
-		if (input.peek (syn::Token![#]) || input.peek (syn::Token![@]))
-		&& (input.peek2(syn::Token![:]) || input.peek2(syn::Token![;])) {
-			let (object, span) =
-				if let Ok(pount) = input.parse::<syn::Token![#]>() {
-					(false, pount.span)
-				} else {
-					let at: syn::Token![@] = input.parse()?;
-					(true, at.span)
-				};
+		if let Ok(tilde) = input.parse::<syn::Token![~]>() {
+			let no_auto = input.parse()?;
+			let object = input.parse::<Option<syn::Token![/]>>()?.is_some();
+			let penult = property_or_item(input, None, reactive)?;
+			let mut content = vec![]; parse_vec(&mut content, input, reactive)?;
 			
-			let semi: Option<syn::Token![;]> = input.parse()?;
-			if semi.is_none() { input.parse::<syn::Token![:]>()?; }
-			
-			let content = parse_vec(input, reactive)?;
-			return Ok(Content::Built { object, span, built: Box::new(Built { semi, content }) })
+			return Ok(Content::Built {
+				object, tilde, built: Box::new(Built { no_auto, penult, content })
+			})
 		}
 		
 		let attrs = attrs.map_or_else(|| input.call(syn::Attribute::parse_outer), Result::Ok)?;
@@ -134,35 +130,42 @@ impl crate::ParseReactive for Content {
 				})))
 			} else {
 				let ext = input.parse()?;
-				let parens; syn::parenthesized!(parens in input);
+				let parens;
+				let paren = syn::parenthesized!(parens in input);
 				let tokens = syn::buffer::TokenBuffer::new2(parens.parse()?);
 				let back = prop::parse_back(input, reactive)?;
-				Ok(Content::Extension(Box::new(Extension { attrs, ext, tokens, back })))
+				Ok(Content::Extension(Box::new(Extension { attrs, ext, paren, tokens, back })))
 			}
-		} else {
-			Ok({
-				let ahead = input.fork();
-				
-				if ahead.parse::<syn::Path>().is_ok()
-				&& ahead.peek(syn::Token![:])
-				|| ahead.peek(syn::Token![;])
-				|| ahead.peek(syn::Token![=])
-				|| ahead.peek(syn::Token![&]) {
-					Content::Property(Box::new(prop::Prop::parse(input, Some(attrs), reactive)?))
-				} else {
-					Content::Item(Box::new(item::parse(input, attrs, reactive, false)?))
-				}
-			})
-		}
+		} else { Ok(property_or_item(input, Some(attrs), reactive)?) }
 	}
 }
 
-pub fn parse_vec(input: syn::parse::ParseStream, reactive: bool) -> syn::Result<Vec<Content>> {
-	let mut props = vec![];
+pub fn parse_vec(
+	 content: &mut Vec<Content>,
+	   input: syn::parse::ParseStream,
+	reactive: bool,
+) -> syn::Result<()> {
 	while !input.is_empty() {
-		props.push(crate::ParseReactive::parse(input, None, reactive)?)
-	}
-	Ok(props)
+		content.push(crate::ParseReactive::parse(input, None, reactive)?)
+	} Ok(())
+}
+
+fn property_or_item(
+	   input: &syn::parse::ParseBuffer,
+	   attrs: Option<Vec<syn::Attribute>>,
+	reactive: bool,
+) -> syn::Result<Content> {
+	let ahead = input.fork();
+	
+	Ok(if ahead.parse::<syn::TypePath>().is_ok()
+	&& ahead.peek(syn::Token![:])
+	|| ahead.peek(syn::Token![;])
+	|| ahead.peek(syn::Token![=])
+	|| ahead.peek(syn::Token![&]) {
+		Content::Property(crate::ParseReactive::parse(input, attrs, reactive)?)
+	} else {
+		Content::Item(Box::new(item::parse(input, attrs.unwrap_or_default(), reactive, false)?))
+	})
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -185,41 +188,49 @@ pub(crate) fn expand(
 			let Some(index) = builder else { return settings.extend(expr) };
 			
 			#[cfg(feature = "builder-mode")]
-			builders[index].1.extend(expr);
+			builders[index].right.extend(expr);
 			
 			#[cfg(not(feature = "builder-mode"))]
 			builders[index].extend(expr);
 		}
 		Content::Extension(extension) => {
-			let Extension { mut attrs, ext, tokens, back } = *extension;
+			let Extension { mut attrs, ext, paren, tokens, back } = *extension;
 			let mut stream = TokenStream::new();
 			
 			if crate::find_pound(&mut tokens.begin(), &mut stream, name) {
+				let mut group = Group::new(Delimiter::Parenthesis, stream);
+				group.set_span(paren.span.join());
+				
 				if let Some(back) = back {
 					crate::extend_attributes(&mut attrs, pattrs);
 					prop::expand_back(
-						*back, objects, builders, settings, bindings, attrs, quote![#ext(#stream)]
+						*back, objects, builders, settings, bindings, attrs, quote![#ext #group]
 					)
-				} else { settings.extend(quote![#(#pattrs)* #(#attrs)* #ext(#stream);]) }
+				} else { settings.extend(quote![#(#pattrs)* #(#attrs)* #ext #group;]) }
 			} else {
 				objects.extend(syn::Error::new(
 					tokens.begin().span(), "no single `#` found around here"
 				).into_compile_error())
 			}
 		}
-		Content::Built { object, span, built } => {
-			let Built { semi: _semi, content } = *built;
+		Content::Built { object, tilde, built } => {
+			let Built { no_auto: _no_auto, penult, content } = *built;
+			expand(penult, objects, builders, settings, bindings, pattrs, name, builder);
+			
 			let Some(index) = builder else {
-				let error = syn::Error::new(span, "only allowed in builder mode");
+				let error = syn::Error::new(tilde.span, "only allowed in builder mode");
 				return objects.extend(error.into_compile_error())
 			};
 			
-			#[cfg(feature = "builder-mode")]
-			{ builders[index].2 = _semi; }
+			#[cfg(feature = "builder-mode")] {
+				let builder = &mut builders[index];
+				builder.span = tilde.span;
+				builder.tilde = _no_auto;
+			}
 			
 			if object {
-				let builder = builders.remove(index);
-				objects.extend(quote![#builder;]);
+				builders.remove(index).to_tokens(objects);
+				objects.append(Punct::new(';', Spacing::Alone));
 			}
 			
 			for content in content { expand(
@@ -287,22 +298,27 @@ pub(crate) fn expand(
 					bindings.stream.extend(quote![#token #expr { #body }])
 				}
 				Binding::Props(props) => {
+					let brace = props.len() > 1 && !(pattrs.is_empty() && attrs.is_empty());
 					let stream: TokenStream = props.into_iter()
 						.filter_map(|prop| prop::expand(
 							prop, objects, builders, settings, bindings, &[], name, None
 						))
 						.collect();
 					
-					if init { settings.extend(quote![#(#pattrs)* #(#attrs)* { #stream }]); }
-					bindings.stream.extend(quote![#(#pattrs)* #(#attrs)* { #stream }])
+					let delim = if brace { Delimiter::Brace } else { Delimiter::None };
+					let group = Group::new(delim, stream);
+					
+					if init { settings.extend(quote![#(#pattrs)* #(#attrs)* #group]); }
+					bindings.stream.extend(quote![#(#pattrs)* #(#attrs)* #group])
 				}
 			}
 		}
 		Content::Binding(binding) => {
 			let Expr { attrs, at, mut_, name, equal, mut expr } = *binding;
 			crate::try_bind(at, objects, bindings, &mut expr);
+			let let_ = syn::Ident::new("let", at.span);
 			
-			settings.extend(quote![#(#pattrs)* #(#attrs)* let #mut_ #name #equal #expr;])
+			settings.extend(quote![#(#pattrs)* #(#attrs)* #let_ #mut_ #name #equal #expr;])
 		}
 	}
 }

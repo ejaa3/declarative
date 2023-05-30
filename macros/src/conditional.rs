@@ -9,9 +9,9 @@ use quote::quote;
 use crate::{property, content, ParseReactive};
 
 pub enum Inner<T> {
-	If    (Vec<syn::Attribute>, Vec<If<T>>),
+	   If (Vec<syn::Attribute>, Vec<If<T>>),
 	Match (Vec<syn::Attribute>, Box<Match<T>>),
-	Prop  (T),
+	 Prop (T),
 }
 
 impl<T: Expand> ParseReactive for Inner<T> {

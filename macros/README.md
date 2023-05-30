@@ -6,8 +6,9 @@
 
 # <img src="../logo.svg" width="96" align="left"/> `declarative-macros`
 
-[![Matrix](https://img.shields.io/matrix/declarative-rs:matrix.org?color=6081D4&label=matrix)](https://matrix.to/#/#declarative-rs:matrix.org)
 [![REUSE status](https://api.reuse.software/badge/github.com/ejaa3/declarative)](https://api.reuse.software/info/github.com/ejaa3/declarative)
+[![declarative-macros on crates.io](https://img.shields.io/crates/v/declarative-macros.svg)](https://crates.io/crates/declarative-macros)
+[![Matrix](https://img.shields.io/matrix/declarative-rs:matrix.org?color=6081D4&label=matrix)](https://matrix.to/#/#declarative-rs:matrix.org)
 
 A proc-macro library for creating complex reactive views declaratively and quickly.
 
@@ -16,11 +17,16 @@ To use it, add to your Cargo.toml:
 ~~~ toml
 [dependencies.declarative]
 package = 'declarative-macros'
-version = '0.3'
+version = '0.4.0'
 
 # for a custom builder mode:
 features = ['builder-mode']
 ~~~
+
+## Main crate
+
+* https://crates.io/crates/declarative
+* https://lib.rs/crates/declarative
 
 ## License
 

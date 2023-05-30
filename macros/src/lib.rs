@@ -18,6 +18,9 @@ use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
 use syn::{parse::{Parse, ParseStream}, visit_mut::VisitMut};
 
+const B_ERROR: &str = "bindings must be consumed with the `bindings!` placeholder macro";
+const V_ERROR: &str = "views must be consumed with the `expand_view_here!` placeholder macro";
+
 struct Roots(Vec<item::Item>);
 
 impl Parse for Roots {
@@ -32,28 +35,26 @@ impl Parse for Roots {
 }
 
 #[derive(Default)]
-struct Bindings { tokens: Vec<TokenStream2>, stream: TokenStream2, }
+struct Bindings { tokens: Vec<TokenStream2>, stream: TokenStream2 }
 
-fn expand(Roots(roots): Roots) -> TokenStream2 {
+fn bindings_error(stream: &mut TokenStream2, bindings: Vec<TokenStream2>) {
+	for tokens in bindings {
+		stream.extend(syn::Error::new_spanned(tokens, B_ERROR).to_compile_error());
+	}
+}
+
+fn expand(Roots(roots): Roots) -> (TokenStream2, Bindings) {
 	let objects  = &mut TokenStream2::new();
 	let builders = &mut vec![];
 	let settings = &mut TokenStream2::new();
-	let bindings = &mut Bindings::default();
+	let mut bindings = Bindings::default();
 	
 	for root in roots { item::expand(
-		root, objects, builders, settings, bindings, &[], None, None
+		root, objects, builders, settings, &mut bindings, &[], None, None
 	) }
 	
-	if !bindings.tokens.is_empty() {
-		for tokens in &bindings.tokens {
-			objects.extend(syn::Error::new_spanned(
-				tokens, "bindings must be consumed with the macro placeholder `bindings!`"
-			).to_compile_error());
-		}
-	}
-	
 	let builders = builders.iter().rev();
-	quote![#objects #(#builders;)* #settings]
+	(quote![#objects #(#builders;)* #settings], bindings)
 }
 
 #[proc_macro]
@@ -62,8 +63,10 @@ fn expand(Roots(roots): Roots) -> TokenStream2 {
 ///
 /// ### Basic usage
 /// ~~~
+/// use declarative_macros::block as view;
+/// 
 /// fn usage() -> String {
-///     declarative::block! {
+///     view! {
 ///         String mut greeting {
 ///             push_str: "Hello world!"
 ///         }
@@ -72,39 +75,64 @@ fn expand(Roots(roots): Roots) -> TokenStream2 {
 /// }
 /// ~~~
 pub fn block(stream: TokenStream) -> TokenStream {
-	TokenStream::from(expand(syn::parse_macro_input!(stream)))
+	let (mut stream, bindings) = expand(syn::parse_macro_input!(stream));
+	bindings_error(&mut stream, bindings.tokens);
+	TokenStream::from(stream)
 }
 
-struct Visitor { placeholder: &'static str, stream: TokenStream2 }
+struct Visitor { placeholder: &'static str, stream: Option<TokenStream2> }
 
 impl VisitMut for Visitor {
 	fn visit_expr_mut(&mut self, node: &mut syn::Expr) {
-		if self.placeholder.is_empty() { return }
+		if self.stream.is_none() { return }
 		
 		if let syn::Expr::Macro(mac) = node {
 			if mac.mac.path.is_ident(self.placeholder) {
-				self.placeholder = "";
-				let stream = &self.stream;
+				let stream = self.stream.take().unwrap();
 				return *node = syn::Expr::Verbatim(quote![{#stream}]);
 			}
 		}
-		syn::visit_mut::visit_expr_mut(self, node);
+		syn::visit_mut::visit_expr_mut(self, node)
 	}
 	
 	fn visit_stmt_mut(&mut self, node: &mut syn::Stmt) {
-		if self.placeholder.is_empty() { return }
+		if self.stream.is_none() { return }
 		
 		if let syn::Stmt::Macro(mac) = node {
 			if mac.mac.path.is_ident(self.placeholder) {
-				self.placeholder = "";
-				let stream = &self.stream;
 				return *node = syn::Stmt::Expr(
-					syn::Expr::Verbatim(quote![#stream]), None
+					syn::Expr::Verbatim(self.stream.take().unwrap()), None
 				);
 			}
 		}
-		syn::visit_mut::visit_stmt_mut(self, node);
+		syn::visit_mut::visit_stmt_mut(self, node)
 	}
+}
+
+struct ViewVisitor { deque: std::collections::VecDeque<(TokenStream2, Bindings)> }
+
+macro_rules! item {
+	($visit:ident: $item:ident) => {
+		fn $visit(&mut self, node: &mut syn::$item) {
+			if let syn::$item::Macro(mac) = node {
+				if mac.mac.path.is_ident("view") {
+					self.deque.push_back(mac.mac.parse_body().map(expand)
+						.unwrap_or_else(|error| (
+							syn::Error::into_compile_error(error), Bindings::default()
+						)));
+					return *node = syn::$item::Verbatim(TokenStream2::new())
+				}
+			}
+			syn::visit_mut::$visit(self, node)
+		}
+	}
+}
+
+impl VisitMut for ViewVisitor {
+	item!(visit_foreign_item_mut: ForeignItem);
+	item!(visit_impl_item_mut: ImplItem);
+	item!(visit_item_mut: Item);
+	item!(visit_trait_item_mut: TraitItem);
 }
 
 #[proc_macro_attribute]
@@ -113,7 +141,9 @@ impl VisitMut for Visitor {
 ///
 /// ### Basic usage
 /// ~~~
-/// #[declarative::view {
+/// use declarative_macros::view;
+/// 
+/// #[view {
 ///     String mut greeting {
 ///         push_str: "Hello world!"
 ///     }
@@ -123,17 +153,57 @@ impl VisitMut for Visitor {
 ///     greeting
 /// }
 /// ~~~
+///
+/// ### Alternate usage
+/// ~~~
+/// use declarative_macros::view;
+/// 
+/// #[view]
+/// mod example {
+///     view! {
+///         String mut greeting {
+///             push_str: "Hello world!"
+///         }
+///     }
+///     fn usage() -> String {
+///         expand_view_here! { }
+///         greeting
+///     }
+/// }
+/// ~~~
 pub fn view(stream: TokenStream, code: TokenStream) -> TokenStream {
-	let stream = expand(syn::parse_macro_input!(stream));
-	let syntax_tree = &mut syn::parse2(TokenStream2::from(code)).unwrap();
+	let file = &mut syn::parse_macro_input!(code);
+	let mut errors = TokenStream2::new();
 	
-	let mut visitor = Visitor { placeholder: "expand_view_here", stream };
-	visitor.visit_file_mut(syntax_tree);
+	if stream.is_empty() {
+		let mut visitor = ViewVisitor { deque: Default::default() };
+		visitor.visit_file_mut(file);
+		
+		if visitor.deque.is_empty() { panic!("there must be at least one `view!`") }
+		
+		while let Some(view) = visitor.deque.pop_front() { parse(file, &mut errors, view) }
+	} else { parse(file, &mut errors, expand(syn::parse_macro_input!(stream))) }
 	
-	if !visitor.placeholder.is_empty() {
-		panic!("the view must be consumed with the macro placeholder `expand_view_here!`")
+	TokenStream::from(quote![#file #errors])
+}
+
+fn parse(file: &mut syn::File, errors: &mut TokenStream2, view: (TokenStream2, Bindings)) {
+	let (stream, bindings) = view;
+	
+	let mut visitor = Visitor { placeholder: "expand_view_here", stream: Some(stream) };
+	visitor.visit_file_mut(file);
+	
+	if let Some(stream) = visitor.stream {
+		errors.extend(syn::Error::new_spanned(stream, V_ERROR).into_compile_error())
 	}
-	TokenStream::from(quote![#syntax_tree])
+	
+	if !bindings.tokens.is_empty() {
+		let stream = Some(bindings.stream);
+		let mut visitor = Visitor { placeholder: "bindings", stream };
+		visitor.visit_file_mut(file);
+		
+		if visitor.stream.is_some() { bindings_error(errors, bindings.tokens) }
+	}
 }
 
 fn count() -> compact_str::CompactString {
@@ -151,13 +221,22 @@ fn count() -> compact_str::CompactString {
 type Builder = TokenStream2;
 
 #[cfg(feature = "builder-mode")]
-struct Builder(TokenStream2, TokenStream2, Option<syn::Token![;]>);
+struct Builder {
+	 left: TokenStream2,
+	right: TokenStream2,
+	 span: Span,
+	tilde: Option<syn::Token![~]>,
+}
 
 #[cfg(feature = "builder-mode")]
 impl quote::ToTokens for Builder {
 	fn to_tokens(&self, tokens: &mut TokenStream2) {
-		let Builder(left, right, end) = self;
-		tokens.extend(quote![#left builder_mode!(#end #right)])
+		let Builder { left, right, span, tilde } = self;
+		left.to_tokens(tokens);
+		
+		quote::quote_spanned! {
+			*span => builder_mode!(#tilde #right)
+		}.to_tokens(tokens)
 	}
 }
 
@@ -236,14 +315,12 @@ fn try_bind(at: syn::Token![@],
 		).to_compile_error())
 	}
 	
-	let stream = std::mem::take(&mut bindings.stream);
+	let stream = Some(std::mem::take(&mut bindings.stream));
 	let mut visitor = Visitor { placeholder: "bindings", stream };
 	visitor.visit_expr_mut(expr);
 	
-	if !visitor.placeholder.is_empty() {
-		objects.extend(syn::Error::new(
-			at.span, "bindings must be consumed with the macro placeholder `bindings!`"
-		).to_compile_error())
+	if visitor.stream.is_some() {
+		objects.extend(syn::Error::new(at.span, B_ERROR).to_compile_error())
 	}
 }
 

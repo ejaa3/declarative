@@ -6,8 +6,9 @@
 
 # <img src="logo.svg" width="96" align="left"/> `declarative`
 
-[![Matrix](https://img.shields.io/matrix/declarative-rs:matrix.org?color=6081D4&label=matrix)](https://matrix.to/#/#declarative-rs:matrix.org)
 [![REUSE status](https://api.reuse.software/badge/github.com/ejaa3/declarative)](https://api.reuse.software/info/github.com/ejaa3/declarative)
+[![declarative on crates.io](https://img.shields.io/crates/v/declarative.svg)](https://crates.io/crates/declarative)
+[![Matrix](https://img.shields.io/matrix/declarative-rs:matrix.org?color=6081D4&label=matrix)](https://matrix.to/#/#declarative-rs:matrix.org)
 
 A proc-macro library for creating complex reactive views declaratively and quickly.
 
@@ -15,7 +16,7 @@ To use it, add to your Cargo.toml:
 
 ~~~ toml
 [dependencies.declarative]
-version = '0.3'
+version = '0.4.0'
 
 # for a custom builder mode:
 features = ['builder-mode']
@@ -50,50 +51,48 @@ In the following I manually implement the Elm pattern. The macro does not requir
 ![Dark theme app screenshot](dark.png)
 
 ~~~ rust
-use declarative::{builder_mode, clone, view};
+use declarative::{block as view, builder_mode, clone};
 use gtk::{glib, prelude::*};
 
 macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send($msg).unwrap()] }
 
 enum Msg { Increase, Decrease }
 
-#[view {
-    gtk::ApplicationWindow window !{
-        application: app
-        title: "My Application"
-
-        gtk::HeaderBar #titlebar(&#) { }
-
-        gtk::Box #child(&#) !{
-            orientation: gtk::Orientation::Vertical
-            spacing: 6
-            margin_top: 6
-            margin_bottom: 6
-            margin_start: 6
-            margin_end: 6 #:
-
-            gtk::Label #append(&#) {
-                'bind! set_label: &format!("The count is: {count}")
-            }
-
-            gtk::Button::with_label("Increase") #append(&#) {
-                connect_clicked: clone![tx; move |_| send!(Msg::Increase => tx)]
-            }
-
-            gtk::Button::with_label("Decrease") #append(&#) {
-                connect_clicked: move |_| send!(Msg::Decrease => tx)
-            }
-
-            @update_view = move |count| bindings!()
-        }
-    }
-}]
-
 fn start(app: &gtk::Application) {
     let (tx, rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
     let mut count = 0; // the state
 
-    expand_view_here! { }
+    view! {
+        gtk::ApplicationWindow window !{
+            application: app
+            title: "My Application"
+
+            gtk::HeaderBar #titlebar(&#) { }
+
+            gtk::Box #child(&#) !{
+                orientation: gtk::Orientation::Vertical
+                spacing: 6
+                margin_top: 6
+                margin_bottom: 6
+                margin_start: 6
+                ~margin_end: 6
+
+                gtk::Label #append(&#) {
+                    'bind @set_label: &format!("The count is: {count}")
+                }
+
+                gtk::Button::with_label("Increase") #append(&#) {
+                    connect_clicked: clone![tx; move |_| send!(Msg::Increase => tx)]
+                }
+
+                gtk::Button::with_label("Decrease") #append(&#) {
+                    connect_clicked: move |_| send!(Msg::Decrease => tx)
+                }
+
+                @update_view = move |count| bindings!()
+            }
+        }
+    }
 
     let update_count = |count: &mut u8, msg| match msg {
         Msg::Increase => *count = count.wrapping_add(1),
@@ -127,6 +126,12 @@ cargo run --features gtk-rs --example y_readme
 The following commands must be executed and must not give any problems:
 
 ~~~ bash
+cargo test -p declarative-macros
+cargo test -p declarative-macros --features builder-mode
+cargo check -p declarative-macros
+cargo check -p declarative-macros --features builder-mode
+cargo clippy -p declarative-macros
+cargo clippy -p declarative-macros --features builder-mode
 cargo test --features gtk-rs
 cargo check
 cargo check --features gtk-rs
@@ -134,6 +139,8 @@ cargo clippy
 cargo clippy --features gtk-rs
 # and now run and check each example
 ~~~
+
+If you need a changelog, maybe the commit log will help (the last ones try to have the most important details).
 
 ## License
 

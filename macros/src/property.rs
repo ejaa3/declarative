@@ -4,23 +4,27 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use proc_macro2::{Span, TokenStream};
-use quote::quote;
+use proc_macro2::{Delimiter, Group, Punct, Spacing, Span, TokenStream};
+use quote::{TokenStreamExt, ToTokens, quote};
+use syn::spanned::Spanned;
 use crate::content;
+
+syn::custom_punctuation!(ColonEq, :=);
+syn::custom_punctuation!(SemiSemi, ;;);
 
 pub struct Prop {
 	 attrs: Vec<syn::Attribute>,
-	  prop: syn::Path,
+	  prop: syn::TypePath,
 	by_ref: Option<syn::Token![&]>,
 	  mut_: Option<syn::Token![mut]>,
 	  mode: Mode,
 }
 
 enum Mode {
-	Edit    (Vec<content::Content>),
-	Field   (Option<syn::Token![@]>, Box<syn::Expr>),
-	Method  { span: Span, args: Vec<(Option<syn::Token![@]>, syn::Expr)>, back: Option<Box<Back>> },
-	FnField { args: Vec<(Option<syn::Token![@]>, syn::Expr)>, back: Option<Box<Back>> },
+	   Edit (Vec<content::Content>),
+	  Field { span: Span, at: Option<syn::Token![@]>, value: Box<syn::Expr> },
+	 Method { span: Span, args: Vec<(Option<syn::Token![@]>, syn::Expr)>, back: Option<Box<Back>> },
+	FnField { span: Span, args: Vec<(Option<syn::Token![@]>, syn::Expr)>, back: Option<Box<Back>> },
 }
 
 impl crate::ParseReactive for Prop {
@@ -29,7 +33,7 @@ impl crate::ParseReactive for Prop {
 	      reactive: bool,
 	) -> syn::Result<Self> {
 		let attrs = attrs.unwrap_or_default();
-		let prop: syn::Path = input.parse()?;
+		let prop: syn::TypePath = input.parse()?;
 		let at = || {
 			let at = input.parse::<Option<syn::Token![@]>>()?;
 			if let (Some(at), false) = (at, reactive) {
@@ -48,12 +52,10 @@ impl crate::ParseReactive for Prop {
 			Ok::<_, syn::Error>((args, back))
 		};
 		
-		if prop.get_ident().is_none() {
-			let (by_ref, mut_) = if prop.segments.len() == 1 {
-				(None, None)
-			} else {
+		if prop.path.get_ident().is_none() || prop.qself.is_some() {
+			let (by_ref, mut_) = if prop.path.segments.len() > 1 || prop.qself.is_some() {
 				(input.parse()?, input.parse()?)
-			};
+			} else { (None, None) };
 			
 			let (span, (args, back)) =
 				if let Ok(colon) = input.parse::<syn::Token![:]>() {
@@ -69,28 +71,25 @@ impl crate::ParseReactive for Prop {
 		let mode = if input.parse::<syn::Token![=>]>().is_ok() {
 			if input.peek(syn::token::Brace) {
 				let braces; syn::braced!(braces in input);
-				Mode::Edit(content::parse_vec(&braces, reactive)?)
+				let mut content = vec![]; content::parse_vec(&mut content, &braces, reactive)?;
+				Mode::Edit(content)
 			} else {
 				Mode::Edit(vec![crate::ParseReactive::parse(input, None, reactive)?])
 			}
-		} else if input.parse::<syn::Token![=]>().is_ok() {
-			Mode::Field(at()?, input.parse()?)
+		} else if let Ok(eq) = input.parse::<syn::Token![=]>() {
+			Mode::Field { span: eq.span, at: at()?, value: input.parse()? }
+		} else if let Ok(colon_eq) = input.parse::<ColonEq>() {
+			let (args, back) = callable()?;
+			Mode::FnField { span: colon_eq.spans[1], args, back }
 		} else if let Ok(colon) = input.parse::<syn::Token![:]>() {
-			if input.parse::<syn::Token![=]>().is_ok() {
-				let (args, back) = callable()?;
-				Mode::FnField { args, back }
-			} else {
-				let (args, back) = callable()?;
-				Mode::Method { span: colon.span, args, back }
-			}
+			let (args, back) = callable()?;
+			Mode::Method { span: colon.span, args, back }
+		} else if let Ok(semi) = input.parse::<SemiSemi>() {
+			let back = parse_back(input, reactive)?;
+			Mode::FnField { span: semi.spans[1], args: vec![], back }
 		} else if let Ok(semi) = input.parse::<syn::Token![;]>() {
-			if input.parse::<syn::Token![;]>().is_ok() {
-				let back = parse_back(input, reactive)?;
-				Mode::FnField { args: vec![], back }
-			} else {
-				let back = parse_back(input, reactive)?;
-				Mode::Method { span: semi.span, args: vec![], back }
-			}
+			let back = parse_back(input, reactive)?;
+			Mode::Method { span: semi.span, args: vec![], back }
 		} else { Err(input.error("expected `=>`, `=`, `:`, `:=`, `;` or `;;`"))? };
 		
 		Ok(Prop { attrs, prop, by_ref: None, mut_: None, mode })
@@ -146,7 +145,7 @@ pub fn parse_back(
 }
 
 pub(crate) fn expand_back(
-	Back { token: _, mut_, back, build, content }: Back,
+	Back { token, mut_, back, build, content }: Back,
 	 objects: &mut TokenStream,
 	builders: &mut Vec<crate::Builder>,
 	settings: &mut TokenStream,
@@ -154,11 +153,12 @@ pub(crate) fn expand_back(
 	   attrs: Vec<syn::Attribute>,
 	   right: TokenStream,
 ) {
-	let left = quote![#(#attrs)* let #mut_ #back =];
+	let let_ = syn::Ident::new("let", token.span());
+	let left = quote![#(#attrs)* #let_ #mut_ #back =];
 	
-	let index = if build.is_some() {
+	let index = if let Some(_build) = build {
 		#[cfg(feature = "builder-mode")]
-		builders.push(crate::Builder(left, right, None));
+		builders.push(crate::Builder { left, right, span: _build.span(), tilde: None });
 		
 		#[cfg(not(feature = "builder-mode"))]
 		builders.push(quote!(#left #right));
@@ -174,8 +174,8 @@ pub(crate) fn expand_back(
 	) }
 	
 	if let Some(index) = index {
-		let builder = builders.remove(index);
-		settings.extend(quote![#builder;])
+		builders.remove(index).to_tokens(settings);
+		settings.append(Punct::new(';', Spacing::Alone));
 	}
 }
 
@@ -205,7 +205,7 @@ pub(crate) fn expand(
 			return None
 		};
 		
-		if prop.segments.len() > 1 {
+		if prop.path.segments.len() > 1 || prop.qself.is_some() {
 			objects.extend(syn::Error::new_spanned(
 				prop, "cannot use long path in builder mode"
 			).into_compile_error());
@@ -218,7 +218,7 @@ pub(crate) fn expand(
 	}
 	
 	let (right, back) = match mode {
-		Mode::Edit(content) => if let Some(prop) = prop.get_ident() {
+		Mode::Edit(content) => if let Some(prop) = prop.path.get_ident() {
 			crate::extend_attributes(&mut attrs, pattrs);
 			
 			let mut field = Vec::with_capacity(assignee.len() + 1);
@@ -231,26 +231,36 @@ pub(crate) fn expand(
 			
 			return None
 		} else {
-			objects.extend(
+			objects.extend( // NOTE this seems dead code
 				syn::Error::new_spanned(prop, "must be a field name").into_compile_error()
 			);
 			return None
 		}
-		Mode::Field(at, mut value) => {
+		Mode::Field { span, at, mut value } => {
+			let assignee = crate::span_to(assignee, span);
 			if let Some(at) = at { crate::try_bind(at, objects, bindings, &mut value) }
 			return Some(quote![#(#pattrs)* #(#attrs)* #(#assignee.)* #prop = #value;])
 		}
-		Mode::Method { span, args, back } => if prop.segments.len() == 1 {
-			let args = try_bind(objects, bindings, args);
-			(quote![#(#assignee.)* #prop(#(#args),*)], back)
-		} else {
+		Mode::Method { span, args, back } => {
 			let assignee = crate::span_to(assignee, span);
-			let args = try_bind(objects, bindings, args);
-			(quote![#prop(#by_ref #mut_ #(#assignee).*, #(#args),*)], back)
+			
+			if prop.path.segments.len() > 1 || prop.qself.is_some() {
+				let args = try_bind(objects, bindings, args);
+				(quote![#prop(#by_ref #mut_ #(#assignee).*, #(#args),*)], back)
+			} else {
+				let args = try_bind(objects, bindings, args);
+				let mut group = Group::new(Delimiter::Parenthesis, quote![#(#args),*]);
+				group.set_span(prop.span());
+				(quote![#(#assignee.)* #prop #group], back)
+			}
 		}
-		Mode::FnField { args, back } => {
+		Mode::FnField { span, args, back } => {
+			let assignee = crate::span_to(assignee, span);
+			let mut field = Group::new(Delimiter::Parenthesis, quote![#(#assignee.)* #prop]);
+			field.set_span(prop.span());
+			
 			let args = try_bind(objects, bindings, args);
-			(quote![(#(#assignee.)* #prop) (#(#args),*)], back) // WARNING #prop must be a field name
+			(quote![#field (#(#args),*)], back) // WARNING #prop must be a field name
 		}
 	};
 	

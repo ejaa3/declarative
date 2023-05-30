@@ -4,8 +4,9 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::{Delimiter, Group, TokenStream};
 use quote::{quote, ToTokens};
+use syn::spanned::Spanned;
 use crate::{content, property};
 
 pub struct Item {
@@ -39,26 +40,24 @@ pub fn parse(
 		let braces; syn::braced!(braces in input);
 		
 		while !braces.is_empty() {
-			if braces.peek(syn::Token![#]) && braces.peek2(syn::Ident) {
-				let pound = braces.parse::<syn::Token![#]>()?;
-				
-				if root { Err(syn::Error::new(pound.span, "cannot #interpolate here"))? }
-				
-				if annex.is_some() {
-					Err(syn::Error::new(pound.span, "expected a single #interpolation"))?
+			if annex.is_none() {
+				if braces.peek(syn::Token![#]) && (
+					braces.peek2(syn::Ident) || braces.peek2(syn::Token![<])
+				) {
+					let pound = braces.parse::<syn::Token![#]>()?;
+					if root { Err(syn::Error::new_spanned(quote![#pound], "cannot #interpolate here"))? }
+					annex = Some(parse_annex(&braces, &name, reactive)?);
+					continue
 				}
-				
-				annex = Some(parse_annex(&braces, &name, reactive)?);
-				continue
-			}
-			content.push(crate::ParseReactive::parse(&braces, None, reactive)?)
+				content.push(crate::ParseReactive::parse(&braces, None, reactive)?)
+			} else { content::parse_vec(&mut content, &braces, reactive)? }
 		}
 	}
 	Ok(Item { attrs, object, annex, build, content })
 }
 
 enum Object {
-	Expr (Box<syn::Expr>    , Option<syn::Token![mut]>, syn::Ident),
+	Expr (Box<syn::Expr>, Option<syn::Token![mut]>, syn::Ident),
 	Type (Box<syn::TypePath>, Option<syn::Token![mut]>, syn::Ident),
 	 Ref (Vec<syn::Ident>),
 }
@@ -114,29 +113,35 @@ fn expand_object(
 	 objects: &mut TokenStream,
 	builders: &mut Vec<crate::Builder>,
 	   attrs: &[syn::Attribute],
-	 builder: bool,
+	 builder: Option<syn::Token![!]>,
 ) -> Option<usize> {
-	if !builder {
+	let Some(_builder) = builder else {
 		objects.extend(match object {
 			Object::Type(ty, mut_, name) => quote![#(#attrs)* let #mut_ #name = #ty::default();],
 			Object::Expr(call, mut_, name) => quote![#(#attrs)* let #mut_ #name = #call;],
 			Object::Ref(_) => return None,
 		});
 		return None
-	}
+	};
 	
 	builders.push(match object {
 		#[cfg(feature = "builder-mode")]
-		Object::Type(ty, mut_, name) => crate::Builder(
-			quote![#(#attrs)* let #mut_ #name =], quote![#ty =>], None
-		),
+		Object::Type(ty, mut_, name) => crate::Builder {
+			 left: quote![#(#attrs)* let #mut_ #name =],
+			right: quote![#ty =>],
+			 span: _builder.span,
+			tilde: None,
+		},
 		#[cfg(not(feature = "builder-mode"))]
 		Object::Type(ty, mut_, name) => quote![#(#attrs)* let #mut_ #name = #ty::default()],
 		
 		#[cfg(feature = "builder-mode")]
-		Object::Expr(expr, mut_, name) => crate::Builder(
-			quote![#(#attrs)* let #mut_ #name =], quote![#expr], None
-		),
+		Object::Expr(expr, mut_, name) => crate::Builder {
+			 left: quote![#(#attrs)* let #mut_ #name =],
+			right: quote![#expr],
+			 span: _builder.span,
+			tilde: None,
+		},
 		#[cfg(not(feature = "builder-mode"))]
 		Object::Expr(expr, mut_, name) => quote![#(#attrs)* let #mut_ #name = #expr],
 		
@@ -147,7 +152,7 @@ fn expand_object(
 }
 
 struct Annex {
-	 annex: syn::Path,
+	 annex: syn::TypePath,
 	by_ref: Option<syn::Token![&]>,
 	  mut_: Option<syn::Token![mut]>,
 	  mode: AnnexMode,
@@ -155,28 +160,30 @@ struct Annex {
 	  back: Option<Box<property::Back>>,
 }
 
-enum AnnexMode { Field (Span), FnField (Span), Method (Span) }
+enum AnnexMode {
+	  Field (syn::token::Brace),
+	FnField (syn::token::Bracket),
+	 Method (syn::token::Paren),
+}
 
 fn parse_annex(
 	   input: syn::parse::ParseStream,
 	    name: &[&syn::Ident],
 	reactive: bool,
 ) -> syn::Result<Box<Annex>> {
-	let annex: syn::Path = input.parse()?;
+	let annex: syn::TypePath = input.parse()?;
+	let buffer;
 	
-	let (by_ref, mut_) = if annex.segments.len() > 1 {
+	let (by_ref, mut_) = if annex.path.segments.len() > 1 || annex.qself.is_some() {
 		(input.parse()?, input.parse()?)
 	} else { (None, None) };
 	
-	let (mode, buffer) = if input.peek(syn::token::Paren) {
-		let parens; syn::parenthesized!(parens in input);
-		(AnnexMode::Method(parens.span()), parens)
+	let mode = if input.peek(syn::token::Paren) {
+		AnnexMode::Method(syn::parenthesized!(buffer in input))
 	} else if input.peek(syn::token::Brace) {
-		let braces; syn::braced!(braces in input);
-		(AnnexMode::Field(braces.span()), braces)
+		AnnexMode::Field(syn::braced!(buffer in input))
 	} else {
-		let brackets; syn::bracketed!(brackets in input);
-		(AnnexMode::FnField(brackets.span()), brackets)
+		AnnexMode::FnField(syn::bracketed!(buffer in input))
 	};
 	
 	let tokens = buffer.step(|cursor| {
@@ -188,7 +195,7 @@ fn parse_annex(
 			.ok_or_else(|| cursor.error("no single `#` found around here"))
 	})?;
 	
-	let back = if let AnnexMode::FnField(_) | AnnexMode::Method(_) = &mode {
+	let back = if let AnnexMode::FnField(..) | AnnexMode::Method(..) = &mode {
 		property::parse_back(input, reactive)?
 	} else { None };
 	
@@ -207,7 +214,11 @@ pub(crate) fn expand(
 	 builder: Option<usize>,
 ) {
 	crate::extend_attributes(&mut attrs, pattrs);
-	let new_builder = expand_object(&object, objects, builders, &attrs, build.is_some());
+	let new_builder = expand_object(&object, objects, builders, &attrs, build);
+	
+	if let Object::Ref(ref idents) = object {
+		settings.extend(quote![#(#attrs)* let _ = #(#idents).*;])
+	}
 	
 	for content in content { content::expand(
 		content, objects, builders, settings, bindings, &attrs, &Name::from(&object), new_builder
@@ -224,9 +235,9 @@ pub(crate) fn expand(
 	if let Some(index) = builder {
 		if let Some(back) = back { return back.do_not_use(objects) }
 		
-		if annex.segments.len() == 1 {
+		if annex.path.segments.len() == 1 || annex.qself.is_none() {
 			#[cfg(feature = "builder-mode")]
-			builders[index].1.extend(quote![.#annex(#tokens)]);
+			builders[index].right.extend(quote![.#annex(#tokens)]);
 			
 			#[cfg(not(feature = "builder-mode"))]
 			builders[index].extend(quote![.#annex(#tokens)]);
@@ -235,34 +246,55 @@ pub(crate) fn expand(
 				annex, "cannot use long path in builder mode"
 			).into_compile_error());
 		}
-	} else if let Some(back) = back {
-		let right = match mode {
-			// WARNING #annex must be a field name:
-			AnnexMode::Field   (_) => quote![ #(#assignee.)* #annex = {#tokens}],
-			AnnexMode::FnField (_) => quote![(#(#assignee.)* #annex)  (#tokens)],
-			
-			AnnexMode::Method(span) => if annex.segments.len() == 1 {
-				quote![#(#assignee.)* #annex(#tokens)]
-			} else {
-				let assignee = crate::span_to(assignee, span);
-				quote![#annex(#by_ref #mut_ #(#assignee).*, #tokens)]
-			}
-		};
-		property::expand_back(*back, objects, builders, settings, bindings, attrs, right)
-	} else {
-		settings.extend(match mode {
-			// WARNING #annex must be a field name:
-			AnnexMode::Field   (_) => quote![#(#attrs)* #(#assignee.)* #annex = {#tokens};],
-			AnnexMode::FnField (_) => quote![#(#attrs)* (#(#assignee.)* #annex) (#tokens);],
-			
-			AnnexMode::Method(span) => if annex.segments.len() == 1 {
-				quote![#(#attrs)* #(#assignee.)* #annex(#tokens);]
-			} else {
-				let assignee = crate::span_to(assignee, span);
-				quote![#(#attrs)* #annex(#by_ref #mut_ #(#assignee).*, #tokens);]
-			}
-		});
+		return
 	}
+	
+	let right = match mode {
+		AnnexMode::Field(brace) => {
+			let assignee = crate::span_to(assignee, brace.span.join());
+			
+			let mut group = Group::new(Delimiter::Brace, tokens);
+			group.set_span(brace.span.join());
+			
+			if back.is_some() { quote![#(#assignee.)* #annex = #group] }
+			else { quote![#(#attrs)* #(#assignee.)* #annex = #group;] } // WARNING #annex must be a field name
+		}
+		AnnexMode::FnField (bracket) => {
+			let assignee = crate::span_to(assignee, bracket.span.join());
+			
+			let mut field = Group::new(Delimiter::Parenthesis, quote![#(#assignee.)* #annex]);
+			field.set_span(annex.span());
+			
+			let mut group = Group::new(Delimiter::Parenthesis, tokens);
+			group.set_span(bracket.span.join());
+			
+			if back.is_some() { quote![#field #group] }
+			else { quote![#(#attrs)* #field #group;] } // WARNING #annex must be a field name
+		}
+		AnnexMode::Method(paren) => {
+			let assignee = crate::span_to(assignee, paren.span.join());
+			
+			if annex.path.segments.len() > 1 || annex.qself.is_some() {
+				let group = quote![#by_ref #mut_ #(#assignee).*, #tokens];
+				
+				let mut group = Group::new(Delimiter::Parenthesis, group);
+				group.set_span(paren.span.join());
+				
+				if back.is_some() { quote![#annex #group] }
+				else { quote![#(#attrs)* #annex #group;] }
+			} else {
+				let mut group = Group::new(Delimiter::Parenthesis, tokens);
+				group.set_span(paren.span.join());
+				
+				if back.is_some() { quote![#(#assignee.)* #annex #group] }
+				else { quote![#(#attrs)* #(#assignee.)* #annex #group;] }
+			}
+		}
+	};
+	
+	if let Some(back) = back {
+		property::expand_back(*back, objects, builders, settings, bindings, attrs, right)
+	} else { settings.extend(right); }
 }
 
 enum Name<'a> { Slice([&'a syn::Ident; 1]), Vec(Vec<&'a syn::Ident>) }
