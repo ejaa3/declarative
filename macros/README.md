@@ -17,7 +17,7 @@ To use it, add to your Cargo.toml:
 ~~~ toml
 [dependencies.declarative]
 package = 'declarative-macros'
-version = '0.4.0'
+version = '0.4.1'
 
 # for a custom builder mode:
 features = ['builder-mode']

@@ -119,9 +119,9 @@ mod example {
 						connect_clicked: move |_| send!(Msg::Decrease => tx_1)
 					}
 					
-					// be careful editing a template after creating a binding closure that updates it:
+					// be careful editing a template after creating a closure that refreshes it:
 					@refresh_template_1 = move |count| bindings!()
-					// at this point the template has partially moved to the binding closure,
+					// at this point the template has partially moved to the closure,
 					// so `Deref` can no longer be used (you can edit `like => { this; }`)
 				}
 				

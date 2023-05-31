@@ -129,7 +129,7 @@ mod example {
 			// 'bind @ initializes and refreshes, conditionally or not (`if` or `match`)
 			// 'bind   does not initialize but refreshes, conditionally or not (`if` or `match`)
 			//
-			// usually you would use `bind without `@` or `:` plus an initial update
+			// usually you would use `bind without `@` or `:` plus an initial refresh
 		}
 	}
 }

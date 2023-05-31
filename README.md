@@ -16,7 +16,7 @@ To use it, add to your Cargo.toml:
 
 ~~~ toml
 [dependencies.declarative]
-version = '0.4.0'
+version = '0.4.1'
 
 # for a custom builder mode:
 features = ['builder-mode']
@@ -54,9 +54,10 @@ In the following I manually implement the Elm pattern. The macro does not requir
 use declarative::{block as view, builder_mode, clone};
 use gtk::{glib, prelude::*};
 
-macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send($msg).unwrap()] }
-
 enum Msg { Increase, Decrease }
+
+// syntactic sugar for sending messages:
+macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send($msg).unwrap()] }
 
 fn start(app: &gtk::Application) {
     let (tx, rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
@@ -89,19 +90,19 @@ fn start(app: &gtk::Application) {
                     connect_clicked: move |_| send!(Msg::Decrease => tx)
                 }
 
-                @update_view = move |count| bindings!()
+                @refresh = move |count| bindings!()
             }
         }
     }
 
-    let update_count = |count: &mut u8, msg| match msg {
+    let update = |count: &mut u8, msg| match msg {
         Msg::Increase => *count = count.wrapping_add(1),
         Msg::Decrease => *count = count.wrapping_sub(1),
     };
 
     rx.attach(None, move |msg| {
-        update_count(&mut count, msg);
-        update_view(count);
+        update(&mut count, msg); // the state is updated
+        refresh(count); // now the view is refreshed
         glib::Continue(true)
     });
 

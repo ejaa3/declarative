@@ -110,8 +110,6 @@ impl Child {
 				connect_clicked: move |_| send!(Msg::Reset => second_child.tx)
 			}
 		}
-		
-		@refresh = move |nth| bindings!()
 	}
 }]
 
@@ -121,8 +119,7 @@ fn start(app: &gtk::Application) {
 	
 	expand_view_here! { }
 	
-	rx.attach(None, move |nth| { refresh(nth); glib::Continue(true) });
-	
+	rx.attach(None, move |nth| { bindings!(); glib::Continue(true) });
 	window.present()
 }
 

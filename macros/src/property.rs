@@ -218,22 +218,18 @@ pub(crate) fn expand(
 	}
 	
 	let (right, back) = match mode {
-		Mode::Edit(content) => if let Some(prop) = prop.path.get_ident() {
+		Mode::Edit(content) => {
 			crate::extend_attributes(&mut attrs, pattrs);
 			
 			let mut field = Vec::with_capacity(assignee.len() + 1);
 			field.extend_from_slice(assignee);
-			field.push(prop);
+			field.push(prop.path.get_ident().expect("an ident"));
+			settings.extend(quote![#(#attrs)* let _ = #(#field).*;]);
 			
 			for content in content { content::expand(
 				content, objects, builders, settings, bindings, &attrs, &field, None
 			) } // TODO builder mode?
 			
-			return None
-		} else {
-			objects.extend( // NOTE this seems dead code
-				syn::Error::new_spanned(prop, "must be a field name").into_compile_error()
-			);
 			return None
 		}
 		Mode::Field { span, at, mut value } => {
@@ -260,7 +256,7 @@ pub(crate) fn expand(
 			field.set_span(prop.span());
 			
 			let args = try_bind(objects, bindings, args);
-			(quote![#field (#(#args),*)], back) // WARNING #prop must be a field name
+			(quote![#field (#(#args),*)], back)
 		}
 	};
 	

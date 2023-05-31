@@ -245,15 +245,16 @@ pub(crate) fn expand(
 		),
 		Content::BindColon(bind_colon) => {
 			let BindColon { attrs, token, colon, if_, cond, props } = *bind_colon;
-			let block = &mut TokenStream::new();
+			let mut block = TokenStream::new();
 			
 			for inner in props { cond::expand(
-				inner, objects, builders, settings, bindings, Some(block), name
+				inner, objects, builders, settings, bindings, Some(&mut block), name
 			) }
 			
+			let body = Group::new(Delimiter::Brace, block);
 			bindings.tokens.push(quote![#token #colon]);
-			bindings.stream.extend(quote![#(#pattrs)* #(#attrs)* #if_ #cond { #block }]);
-			settings.extend(quote![#(#pattrs)* #(#attrs)* { #block }]);
+			bindings.stream.extend(quote![#(#pattrs)* #(#attrs)* #if_ #cond #body]);
+			settings.extend(quote![#(#pattrs)* #(#attrs)* #body]);
 		}
 		Content::Bind(bind) => {
 			let Bind { attrs, token, init, binding } = *bind;
@@ -266,14 +267,15 @@ pub(crate) fn expand(
 					bindings.stream.extend(quote![#(#pattrs)* #(#attrs)*]);
 					
 					for cond::If { else_, if_, expr, inner } in if_vec {
-						let block = &mut TokenStream::new();
+						let mut block = TokenStream::new();
 						
 						for inner in inner { cond::expand(
-							inner, objects, builders, settings, bindings, Some(block), name
+							inner, objects, builders, settings, bindings, Some(&mut block), name
 						) }
 						
-						if init { settings.extend(quote![#else_ #if_ #expr { #block }]) };
-						bindings.stream.extend(quote![#else_ #if_ #expr { #block }])
+						let body = Group::new(Delimiter::Brace, block);
+						if init { settings.extend(quote![#else_ #if_ #expr #body]) };
+						bindings.stream.extend(quote![#else_ #if_ #expr #body])
 					}
 				}
 				Binding::Match(match_) => {
@@ -284,18 +286,20 @@ pub(crate) fn expand(
 					
 					let body = TokenStream::from_iter(arms.into_iter()
 						.map(|cond::Arm { attrs, pat, guard, arrow, body }| {
-							let block = &mut TokenStream::new();
+							let mut block = TokenStream::new();
 							let (if_, expr) = guard.as_deref().map(|(a, b)| (a, b)).unzip();
 							
 							for inner in body { cond::expand(
-								inner, objects, builders, settings, bindings, Some(block), name
+								inner, objects, builders, settings, bindings, Some(&mut block), name
 							) }
 							
-							quote![#(#attrs)* #pat #if_ #expr #arrow { #block }]
+							let body = Group::new(Delimiter::Brace, block);
+							quote![#(#attrs)* #pat #if_ #expr #arrow #body]
 						}));
 					
-					if init { settings.extend(quote![#token #expr { #body }]) };
-					bindings.stream.extend(quote![#token #expr { #body }])
+					let body = Group::new(Delimiter::Brace, body);
+					if init { settings.extend(quote![#token #expr #body]) };
+					bindings.stream.extend(quote![#token #expr #body])
 				}
 				Binding::Props(props) => {
 					let brace = props.len() > 1 && !(pattrs.is_empty() && attrs.is_empty());
@@ -306,10 +310,10 @@ pub(crate) fn expand(
 						.collect();
 					
 					let delim = if brace { Delimiter::Brace } else { Delimiter::None };
-					let group = Group::new(delim, stream);
+					let body = Group::new(delim, stream);
 					
-					if init { settings.extend(quote![#(#pattrs)* #(#attrs)* #group]); }
-					bindings.stream.extend(quote![#(#pattrs)* #(#attrs)* #group])
+					if init { settings.extend(quote![#(#pattrs)* #(#attrs)* #body]); }
+					bindings.stream.extend(quote![#(#pattrs)* #(#attrs)* #body])
 				}
 			}
 		}

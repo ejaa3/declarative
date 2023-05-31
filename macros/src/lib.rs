@@ -14,8 +14,8 @@ mod item;
 mod property;
 
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
-use quote::quote;
+use proc_macro2::{Delimiter, Group, Span, TokenStream as TokenStream2, TokenTree};
+use quote::{TokenStreamExt, quote, ToTokens};
 use syn::{parse::{Parse, ParseStream}, visit_mut::VisitMut};
 
 const B_ERROR: &str = "bindings must be consumed with the `bindings!` placeholder macro";
@@ -88,8 +88,9 @@ impl VisitMut for Visitor {
 		
 		if let syn::Expr::Macro(mac) = node {
 			if mac.mac.path.is_ident(self.placeholder) {
-				let stream = self.stream.take().unwrap();
-				return *node = syn::Expr::Verbatim(quote![{#stream}]);
+				let group = Group::new(Delimiter::Brace, self.stream.take().unwrap());
+				let mut stream = TokenStream2::new(); stream.append(group);
+				return *node = syn::Expr::Verbatim(stream);
 			}
 		}
 		syn::visit_mut::visit_expr_mut(self, node)
@@ -173,7 +174,7 @@ impl VisitMut for ViewVisitor {
 /// ~~~
 pub fn view(stream: TokenStream, code: TokenStream) -> TokenStream {
 	let file = &mut syn::parse_macro_input!(code);
-	let mut errors = TokenStream2::new();
+	let mut output = TokenStream2::new();
 	
 	if stream.is_empty() {
 		let mut visitor = ViewVisitor { deque: Default::default() };
@@ -181,20 +182,21 @@ pub fn view(stream: TokenStream, code: TokenStream) -> TokenStream {
 		
 		if visitor.deque.is_empty() { panic!("there must be at least one `view!`") }
 		
-		while let Some(view) = visitor.deque.pop_front() { parse(file, &mut errors, view) }
-	} else { parse(file, &mut errors, expand(syn::parse_macro_input!(stream))) }
+		while let Some(view) = visitor.deque.pop_front() { parse(file, &mut output, view) }
+	} else { parse(file, &mut output, expand(syn::parse_macro_input!(stream))) }
 	
-	TokenStream::from(quote![#file #errors])
+	file.to_tokens(&mut output);
+	TokenStream::from(output)
 }
 
-fn parse(file: &mut syn::File, errors: &mut TokenStream2, view: (TokenStream2, Bindings)) {
+fn parse(file: &mut syn::File, output: &mut TokenStream2, view: (TokenStream2, Bindings)) {
 	let (stream, bindings) = view;
 	
 	let mut visitor = Visitor { placeholder: "expand_view_here", stream: Some(stream) };
 	visitor.visit_file_mut(file);
 	
 	if let Some(stream) = visitor.stream {
-		errors.extend(syn::Error::new_spanned(stream, V_ERROR).into_compile_error())
+		output.extend(syn::Error::new_spanned(stream, V_ERROR).into_compile_error())
 	}
 	
 	if !bindings.tokens.is_empty() {
@@ -202,7 +204,7 @@ fn parse(file: &mut syn::File, errors: &mut TokenStream2, view: (TokenStream2, B
 		let mut visitor = Visitor { placeholder: "bindings", stream };
 		visitor.visit_file_mut(file);
 		
-		if visitor.stream.is_some() { bindings_error(errors, bindings.tokens) }
+		if visitor.stream.is_some() { bindings_error(output, bindings.tokens) }
 	}
 }
 
@@ -278,7 +280,7 @@ fn find_pound(rest: &mut syn::buffer::Cursor, outer: &mut TokenStream2, name: &[
 				
 				let mut copy = proc_macro2::Group::new(delimiter, inner);
 				copy.set_span(group.span());
-				outer.extend(quote![#copy]);
+				outer.append(copy);
 				
 				*rest = next;
 				if found { outer.extend(next.token_stream()); return true }
@@ -287,7 +289,7 @@ fn find_pound(rest: &mut syn::buffer::Cursor, outer: &mut TokenStream2, name: &[
 			TokenTree::Punct(punct) => if punct.as_char() == '#' {
 				if let Some((punct, next)) = next.punct() {
 					if punct.as_char() == '#' {
-						outer.extend(quote![#punct]);
+						outer.append(punct);
 						*rest = next;
 						continue;
 					}
@@ -296,9 +298,9 @@ fn find_pound(rest: &mut syn::buffer::Cursor, outer: &mut TokenStream2, name: &[
 				outer.extend(quote![#(#name).*]);
 				outer.extend(next.token_stream());
 				return true
-			} else { outer.extend(quote![#punct]); *rest = next; }
+			} else { outer.append(punct); *rest = next; }
 			
-			token_tree => { outer.extend(quote![#token_tree]); *rest = next; }
+			token_tree => { outer.append(token_tree); *rest = next; }
 		}
 	}
 	false

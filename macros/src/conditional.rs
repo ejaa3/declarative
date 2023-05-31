@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Delimiter, Group, TokenStream};
 use quote::quote;
 use crate::{property, content, ParseReactive};
 
@@ -48,13 +48,14 @@ pub(crate) fn expand<T: Expand>(
 			block.extend(quote![#(#attrs)*]);
 			
 			for If { else_, if_, expr, inner } in if_vec {
-				let stream = &mut TokenStream::new();
+				let mut stream = TokenStream::new();
 				
 				for inner in inner { expand(
-					inner, objects, builders, settings, bindings, Some(stream), name
+					inner, objects, builders, settings, bindings, Some(&mut stream), name
 				) }
 				
-				block.extend(quote![#else_ #if_ #expr { #stream }]);
+				let body = Group::new(Delimiter::Brace, stream);
+				block.extend(quote![#else_ #if_ #expr #body]);
 			}
 		} else {
 			settings.extend(quote![#(#attrs)*]);
@@ -80,17 +81,19 @@ pub(crate) fn expand<T: Expand>(
 				
 				let body = TokenStream::from_iter(arms.into_iter()
 					.map(|Arm { attrs, pat, guard, arrow, body }| {
-						let stream = &mut TokenStream::new();
+						let mut stream = TokenStream::new();
 						let (if_, expr) = guard.as_deref().map(|(a, b)| (a, b)).unzip();
 						
 						for inner in body { expand(
-							inner, objects, builders, settings, bindings, Some(stream), name
+							inner, objects, builders, settings, bindings, Some(&mut stream), name
 						) }
 						
-						quote![#(#attrs)* #pat #if_ #expr #arrow { #stream }]
+						let body = Group::new(Delimiter::Brace, stream);
+						quote![#(#attrs)* #pat #if_ #expr #arrow #body]
 					}));
 				
-				block.extend(quote![#token #expr { #body }])
+				let body = Group::new(Delimiter::Brace, body);
+				block.extend(quote![#token #expr #body])
 			} else {
 				settings.extend(quote![#(#attrs)*]);
 				
