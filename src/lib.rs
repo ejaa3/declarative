@@ -14,10 +14,14 @@ pub use declarative::{block, view};
 #[macro_export]
 /// Macro called by [`block!`] and [`view!`] macros when editing in builder mode (currently must be in scope).
 macro_rules! builder_mode {
+	(~($struct:expr)) => { $struct };
+	( ($struct:expr)) => { $struct.start() };
+	
 	(~$expr:expr) => { $expr };
 	( $expr:expr) => { $expr.build() };
-	(~$type:ty => $($token:tt)*) => { <$type>::builder() $($token)* };
-	( $type:ty => $($token:tt)*) => { <$type>::builder() $($token)*.build() };
+	
+	(~$type:ty => $($methods:tt)*) => { <$type>::builder() $($methods)* };
+	( $type:ty => $($methods:tt)*) => { <$type>::builder() $($methods)*.build() };
 }
 
 #[macro_export]

@@ -113,7 +113,7 @@ mod example {
 						'bind set_label: &format!("The first count is: {count}")
 					}
 					
-					// we can interpolate here thanks to `Deref`;
+					// we can #interpolate with just the method thanks to `Deref`;
 					// otherwise we would have to edit the `root` field as `label`:
 					gtk::Button::with_label("Decrease") #append(&#) {
 						connect_clicked: move |_| send!(Msg::Decrease => tx_1)
@@ -130,9 +130,10 @@ mod example {
 				// almost the same code as above:
 				BoxTemplate::new("second", &tx_2) second #append(&#.root) {
 					// if the field is only edited once, it is not necessary to use braces:
-					label => 'bind set_label: &format!("The second count is: {count}")
+					'bind label.set_label: &format!("The second count is: {count}")
 					
-					gtk::Button::with_label("Decrease") #append(&#) {
+					// if `Deref` is not implemented, it is possible to #interpolate like this:
+					gtk::Button::with_label("Decrease") #root.append(&#) {
 						connect_clicked: move |_| send!(Msg::Decrease => tx_2)
 					}
 					

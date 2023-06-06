@@ -6,8 +6,7 @@
 
 use declarative::{builder_mode, clone, view};
 use gtk::{glib, prelude::*};
-use once_cell::unsync::OnceCell;
-use std::{cell::{Ref, RefCell, RefMut}, rc::Rc};
+use std::{cell::{OnceCell, Ref, RefCell, RefMut}, rc::Rc};
 
 // let's try to update the state and refresh the view without using channels
 
@@ -19,7 +18,7 @@ struct View<R> { // `R` is for the closure that [R]efreshes the view
 } // this approach requires sharing (as `Rc<View>` or a static view)
 
 #[view]
-impl<U> View<U> {
+impl<R> View<R> {
 	fn start(app: &gtk::Application) {
 		let state = RefCell::new(State { count: 0 }); // `state` is initialized
 		let view = Rc::new(View { state, refresh: OnceCell::new() });
@@ -38,7 +37,7 @@ impl<U> View<U> {
 	
 	fn update(&self, update_state: fn(RefMut<State>))
 	// view does not mutate `state` while refreshing, and so `Ref<State>`:
-	where U: Fn(Ref<State>) {
+	where R: Fn(Ref<State>) {
 		// the state is mutated from the view itself:
 		update_state(self.state.borrow_mut());
 		
@@ -54,10 +53,9 @@ impl<U> View<U> {
 			
 			gtk::HeaderBar #titlebar(&#) { }
 			
-			'bind if state.count % 2 == 0 {
-				set_title: Some("The value is even")
-			} else {
-				set_title: Some("The value is odd")
+			'bind match state.count % 2 == 0 {
+				true  => set_title: Some("The value is even")
+				false => set_title: Some("The value is odd")
 			}
 			
 			gtk::Grid #child(&#) !{

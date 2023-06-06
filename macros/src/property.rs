@@ -4,36 +4,28 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use proc_macro2::{Delimiter, Group, Punct, Spacing, Span, TokenStream};
+use proc_macro2::{Delimiter, Group, Punct, Spacing, TokenStream};
 use quote::{TokenStreamExt, ToTokens, quote};
-use syn::spanned::Spanned;
-use crate::content;
-
-syn::custom_punctuation!(ColonEq, :=);
-syn::custom_punctuation!(SemiSemi, ;;);
+use syn::{punctuated::Punctuated, spanned::Spanned};
+use crate::{content, Assignee, Builder, Mode};
 
 pub struct Prop {
 	 attrs: Vec<syn::Attribute>,
-	  prop: syn::TypePath,
+	  prop: crate::Path,
 	by_ref: Option<syn::Token![&]>,
 	  mut_: Option<syn::Token![mut]>,
 	  mode: Mode,
+	  args: Vec<(Option<syn::Token![@]>, syn::Expr)>,
+	  back: Option<Box<Back>>,
 }
 
-enum Mode {
-	   Edit (Vec<content::Content>),
-	  Field { span: Span, at: Option<syn::Token![@]>, value: Box<syn::Expr> },
-	 Method { span: Span, args: Vec<(Option<syn::Token![@]>, syn::Expr)>, back: Option<Box<Back>> },
-	FnField { span: Span, args: Vec<(Option<syn::Token![@]>, syn::Expr)>, back: Option<Box<Back>> },
-}
-
-impl crate::ParseReactive for Prop {
+impl crate::ParseReactive for Box<Prop> {
 	fn parse(input: syn::parse::ParseStream,
 	         attrs: Option<Vec<syn::Attribute>>,
 	      reactive: bool,
 	) -> syn::Result<Self> {
 		let attrs = attrs.unwrap_or_default();
-		let prop: syn::TypePath = input.parse()?;
+		let prop: crate::Path = input.parse()?;
 		let at = || {
 			let at = input.parse::<Option<syn::Token![@]>>()?;
 			if let (Some(at), false) = (at, reactive) {
@@ -52,56 +44,26 @@ impl crate::ParseReactive for Prop {
 			Ok::<_, syn::Error>((args, back))
 		};
 		
-		if prop.path.get_ident().is_none() || prop.qself.is_some() {
-			let (by_ref, mut_) = if prop.path.segments.len() > 1 || prop.qself.is_some() {
-				(input.parse()?, input.parse()?)
-			} else { (None, None) };
-			
-			let (span, (args, back)) =
-				if let Ok(colon) = input.parse::<syn::Token![:]>() {
-					(colon.span, callable()?)
-				} else if let Ok(semi) = input.parse::<syn::Token![;]>() {
-					(semi.span, (vec![], parse_back(input, reactive)?))
-				} else { Err(input.error("expected `:` or `;`"))? };
-			
-			let mode = Mode::Method { span, args, back };
-			return Ok(Prop { attrs, prop, by_ref, mut_, mode })
-		}
+		let (by_ref, mut_) = if prop.is_long() {
+			(input.parse()?, input.parse()?)
+		} else { (None, None) };
 		
-		let mode = if input.parse::<syn::Token![=>]>().is_ok() {
-			if input.peek(syn::token::Brace) {
-				let braces; syn::braced!(braces in input);
-				let mut content = vec![]; content::parse_vec(&mut content, &braces, reactive)?;
-				Mode::Edit(content)
-			} else {
-				Mode::Edit(vec![crate::ParseReactive::parse(input, None, reactive)?])
-			}
-		} else if let Ok(eq) = input.parse::<syn::Token![=]>() {
-			Mode::Field { span: eq.span, at: at()?, value: input.parse()? }
+		syn::custom_punctuation!(ColonEq, :=);
+		syn::custom_punctuation!(SemiSemi, ;;);
+		
+		let (mode, (args, back)) = if let Ok(eq) = input.parse::<syn::Token![=]>() {
+			(Mode::Field(eq.span), (vec![(at()?, input.parse()?)], None))
 		} else if let Ok(colon_eq) = input.parse::<ColonEq>() {
-			let (args, back) = callable()?;
-			Mode::FnField { span: colon_eq.spans[1], args, back }
+			(Mode::FnField(colon_eq.spans[1]), callable()?)
 		} else if let Ok(colon) = input.parse::<syn::Token![:]>() {
-			let (args, back) = callable()?;
-			Mode::Method { span: colon.span, args, back }
+			(Mode::Method(colon.span), callable()?)
 		} else if let Ok(semi) = input.parse::<SemiSemi>() {
-			let back = parse_back(input, reactive)?;
-			Mode::FnField { span: semi.spans[1], args: vec![], back }
+			(Mode::FnField(semi.spans[1]), (vec![], parse_back(input, reactive)?))
 		} else if let Ok(semi) = input.parse::<syn::Token![;]>() {
-			let back = parse_back(input, reactive)?;
-			Mode::Method { span: semi.span, args: vec![], back }
+			(Mode::Method(semi.span), (vec![], parse_back(input, reactive)?))
 		} else { Err(input.error("expected `=>`, `=`, `:`, `:=`, `;` or `;;`"))? };
 		
-		Ok(Prop { attrs, prop, by_ref: None, mut_: None, mode })
-	}
-}
-
-impl crate::ParseReactive for Box<Prop> {
-	fn parse(input: syn::parse::ParseStream,
-	         attrs: Option<Vec<syn::Attribute>>,
-	      reactive: bool,
-	) -> syn::Result<Self> {
-		Ok(Box::new(crate::ParseReactive::parse(input, attrs, reactive)?))
+		Ok(Box::new(Prop { attrs, prop, by_ref, mut_, mode, args, back }))
 	}
 }
 
@@ -111,13 +73,6 @@ pub struct Back {
 	pub    back: syn::Ident,
 	pub   build: Option<syn::Token![!]>,
 	pub content: Vec<content::Content>,
-}
-
-impl Back {
-	pub fn do_not_use(self, stream: &mut TokenStream) {
-		let error = syn::Error::new(self.token.span(), "cannot use 'back in builder mode");
-		stream.extend(error.into_compile_error())
-	}
 }
 
 pub fn parse_back(
@@ -147,7 +102,7 @@ pub fn parse_back(
 pub(crate) fn expand_back(
 	Back { token, mut_, back, build, content }: Back,
 	 objects: &mut TokenStream,
-	builders: &mut Vec<crate::Builder>,
+	builders: &mut Vec<Builder>,
 	settings: &mut TokenStream,
 	bindings: &mut crate::Bindings,
 	   attrs: Vec<syn::Attribute>,
@@ -158,115 +113,25 @@ pub(crate) fn expand_back(
 	
 	let index = if let Some(_build) = build {
 		#[cfg(feature = "builder-mode")]
-		builders.push(crate::Builder { left, right, span: _build.span(), tilde: None });
+		builders.push(Builder::Builder { left, right, span: _build.span, tilde: None });
 		
 		#[cfg(not(feature = "builder-mode"))]
-		builders.push(quote!(#left #right));
+		builders.push(Builder::Builder(quote![#left #right]));
 		
 		Some(builders.len() - 1)
 	} else {
-		settings.extend(quote!(#left #right;));
+		settings.extend(quote![#left #right;]);
 		None
 	};
 	
 	for content in content { content::expand(
-		content, objects, builders, settings, bindings, &attrs, &[&back], index
+		content, objects, builders, settings, bindings, &attrs, Assignee::Ident(&back), index
 	) }
 	
 	if let Some(index) = index {
 		builders.remove(index).to_tokens(settings);
 		settings.append(Punct::new(';', Spacing::Alone));
 	}
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn expand(
-	Prop { mut attrs, prop, by_ref, mut_, mode }: Prop,
-	 objects: &mut TokenStream,
-	builders: &mut Vec<crate::Builder>,
-	settings: &mut TokenStream,
-	bindings: &mut crate::Bindings,
-	  pattrs: &[syn::Attribute],
-	assignee: &[&syn::Ident],
-	 builder: Option<usize>,
-) -> Option<TokenStream> {
-	if builder.is_some() {
-		if !attrs.is_empty() {
-			objects.extend(syn::Error::new_spanned(
-				quote![#(#attrs)*], "cannot use attributes in builder mode"
-			).into_compile_error());
-			return None
-		}
-		
-		let Mode::Method { span: _, args, back } = mode else {
-			objects.extend(syn::Error::new_spanned(
-				prop, "can only call methods in builder mode"
-			).into_compile_error());
-			return None
-		};
-		
-		if prop.path.segments.len() > 1 || prop.qself.is_some() {
-			objects.extend(syn::Error::new_spanned(
-				prop, "cannot use long path in builder mode"
-			).into_compile_error());
-			return None
-		}
-		
-		if let Some(back) = back { back.do_not_use(objects); return None }
-		let args = try_bind(objects, bindings, args);
-		return Some(quote![.#prop(#(#args),*)])
-	}
-	
-	let (right, back) = match mode {
-		Mode::Edit(content) => {
-			crate::extend_attributes(&mut attrs, pattrs);
-			
-			let mut field = Vec::with_capacity(assignee.len() + 1);
-			field.extend_from_slice(assignee);
-			field.push(prop.path.get_ident().expect("an ident"));
-			settings.extend(quote![#(#attrs)* let _ = #(#field).*;]);
-			
-			for content in content { content::expand(
-				content, objects, builders, settings, bindings, &attrs, &field, None
-			) } // TODO builder mode?
-			
-			return None
-		}
-		Mode::Field { span, at, mut value } => {
-			let assignee = crate::span_to(assignee, span);
-			if let Some(at) = at { crate::try_bind(at, objects, bindings, &mut value) }
-			return Some(quote![#(#pattrs)* #(#attrs)* #(#assignee.)* #prop = #value;])
-		}
-		Mode::Method { span, args, back } => {
-			let assignee = crate::span_to(assignee, span);
-			
-			if prop.path.segments.len() > 1 || prop.qself.is_some() {
-				let args = try_bind(objects, bindings, args);
-				(quote![#prop(#by_ref #mut_ #(#assignee).*, #(#args),*)], back)
-			} else {
-				let args = try_bind(objects, bindings, args);
-				let mut group = Group::new(Delimiter::Parenthesis, quote![#(#args),*]);
-				group.set_span(prop.span());
-				(quote![#(#assignee.)* #prop #group], back)
-			}
-		}
-		Mode::FnField { span, args, back } => {
-			let assignee = crate::span_to(assignee, span);
-			let mut field = Group::new(Delimiter::Parenthesis, quote![#(#assignee.)* #prop]);
-			field.set_span(prop.span());
-			
-			let args = try_bind(objects, bindings, args);
-			(quote![#field (#(#args),*)], back)
-		}
-	};
-	
-	let Some(back_) = back else {
-		return Some(quote![#(#pattrs)* #(#attrs)* #right;])
-	};
-	
-	crate::extend_attributes(&mut attrs, pattrs);
-	expand_back(*back_, objects, builders, settings, bindings, attrs, right);
-	None
 }
 
 fn try_bind<'a>(
@@ -278,8 +143,197 @@ fn try_bind<'a>(
 	impl FnMut((Option<syn::Token![@]>, syn::Expr)) -> syn::Expr + 'a
 > {
 	args.into_iter().map(|(at, mut arg)| {
-		if let Some(at) = at {
-			crate::try_bind(at, objects, bindings, &mut arg);
-		} arg
+		let Some(at) = at else { return arg };
+		crate::try_bind(at, objects, bindings, &mut arg);
+		arg
 	})
+}
+
+pub(crate) fn check(
+	stream: &mut TokenStream,
+	 attrs: Option<&[syn::Attribute]>,
+	  path: &crate::Path,
+	  mode: Mode,
+	 inter: bool,
+	  back: Option<Box<Back>>,
+) -> Result<(), ()> {
+	if path.is_long() {
+		Err(stream.extend(syn::Error::new_spanned(
+			path, "cannot use long path in builder mode"
+		).into_compile_error()))?
+	}
+	if let Some(attrs) = attrs {
+		if !attrs.is_empty() {
+			Err(stream.extend(syn::Error::new_spanned(
+				quote![#(#attrs)*], "cannot use attributes for chained methods"
+			).into_compile_error()))?
+		}
+	} else if match path {
+		crate::Path::Type(path) => path.path.get_ident().is_none(),
+		crate::Path::Field { gens, .. } => gens.is_some(),
+	} {
+		Err(stream.extend(syn::Error::new_spanned(
+			path, "cannot give generics to struct fields"
+		).into_compile_error()))?
+	}
+	if let Mode::Field(span) = mode {
+		Err(stream.extend(syn::Error::new(span, match inter {
+			true  => "currently only parentheses can be used",
+			false => "only use a colon or a single semicolon",
+		}).into_compile_error()))?
+	}
+	if let Some(back) = back {
+		Err(stream.extend(syn::Error::new(
+			back.token.span(), "cannot use 'back in builder mode"
+		).into_compile_error()))?
+	}
+	Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn expand(
+	Prop { mut attrs, prop, by_ref, mut_, mode, mut args, back }: Prop,
+	 objects: &mut TokenStream,
+	builders: &mut Vec<Builder>,
+	settings: &mut TokenStream,
+	bindings: &mut crate::Bindings,
+	  pattrs: &[syn::Attribute],
+	assignee: Assignee,
+	 builder: Option<usize>,
+) {
+	macro_rules! set_field {
+		($fields:ident) => {
+			if args.len() > 1 {
+				let args = args.into_iter().map(|(_, arg)| arg);
+				return objects.extend(syn::Error::new_spanned(
+					quote![#(#args)*], "cannot give multiple arguments"
+				).into_compile_error());
+			}
+			let args = try_bind(objects, bindings, args);
+			$fields.get_mut().extend(quote![#prop #(: #args)*,])
+		};
+	}
+	
+	match builder.map(|index| &mut builders[index]) {
+		#[cfg(not(feature = "builder-mode"))]
+		Some(Builder::Builder(stream)) =>
+			return if check(objects, Some(&attrs), &prop, mode, false, back).is_ok() {
+				let args = try_bind(objects, bindings, args);
+				return stream.extend(quote![.#prop(#(#args),*)])
+			},
+		
+		#[cfg(feature = "builder-mode")]
+		Some(Builder::Builder { right, .. }) =>
+			return if check(objects, Some(&attrs), &prop, mode, false, back).is_ok() {
+				let args = try_bind(objects, bindings, args);
+				right.extend(quote![.#prop(#(#args),*)])
+			},
+		
+		#[cfg(not(feature = "builder-mode"))]
+		Some(Builder::Struct { ty: _, fields, call }) => return if check(
+			objects, call.is_some().then_some(&attrs), &prop, mode, false, back
+		).is_ok() {
+			if let Some(call) = call {
+				let args = try_bind(objects, bindings, args);
+				call.extend(quote![.#prop(#(#args),*)])
+			} else { set_field!(fields); }
+		},
+		
+		#[cfg(feature = "builder-mode")]
+		Some(Builder::Struct { fields, .. }) =>
+			return if check(objects, None, &prop, mode, false, back).is_ok() {
+				set_field!(fields);
+			},
+		
+		None => ()
+	}
+	
+	let (right, back) = match mode {
+		Mode::Field(span) => {
+			let (assignee, (at, value)) = (assignee.spanned_to(span), &mut args[0]);
+			if let Some(at) = at { crate::try_bind(*at, objects, bindings, value) }
+			return settings.extend(quote![#(#pattrs)* #(#attrs)* #(#assignee.)* #prop = #value;])
+		}
+		Mode::Method(span) => {
+			let assignee = assignee.spanned_to(span);
+			
+			if prop.is_long() {
+				let args = try_bind(objects, bindings, args);
+				(quote![#prop(#by_ref #mut_ #(#assignee).*, #(#args),*)], back)
+			} else {
+				let args = try_bind(objects, bindings, args);
+				let mut group = Group::new(Delimiter::Parenthesis, quote![#(#args),*]);
+				group.set_span(prop.span());
+				
+				(quote![#(#assignee.)* #prop #group], back)
+			}
+		}
+		Mode::FnField(span) => {
+			let assignee = assignee.spanned_to(span);
+			let mut field = Group::new(Delimiter::Parenthesis, quote![#(#assignee.)* #prop]);
+			field.set_span(prop.span());
+			
+			let args = try_bind(objects, bindings, args);
+			(quote![#field (#(#args),*)], back)
+		}
+	};
+	
+	let Some(back) = back else {
+		return settings.extend(quote![#(#pattrs)* #(#attrs)* #right;])
+	};
+	
+	crate::extend_attributes(&mut attrs, pattrs);
+	expand_back(*back, objects, builders, settings, bindings, attrs, right)
+}
+
+pub struct Edit {
+	  attrs: Vec<syn::Attribute>,
+	   edit: Punctuated<syn::Ident, syn::Token![.]>,
+	  arrow: syn::Token![=>],
+	content: Vec<content::Content>,
+}
+
+pub fn parse_edit(
+	   input: syn::parse::ParseStream,
+	   attrs: Vec<syn::Attribute>,
+	reactive: bool,
+) -> syn::Result<Box<Edit>> {
+	let edit = crate::parse_unterminated(input)?;
+	let arrow = input.parse()?;
+	let (_, content) = crate::parse_vec(input, reactive)?;
+	Ok(Box::new(Edit { attrs, edit, arrow, content }))
+}
+
+pub(crate) fn expand_edit(
+	Edit { mut attrs, edit, arrow, content }: Edit,
+	 objects: &mut TokenStream,
+	builders: &mut Vec<Builder>,
+	settings: &mut TokenStream,
+	bindings: &mut crate::Bindings,
+	  pattrs: &[syn::Attribute],
+	assignee: Assignee,
+) {
+	crate::extend_attributes(&mut attrs, pattrs);
+	let punctuated;
+	
+	let assignee = match assignee {
+		Assignee::Field(field) => {
+			punctuated = Punctuated::from_iter(field.iter().cloned().chain(edit.into_iter()));
+			Assignee::Field(&punctuated)
+		}
+		Assignee::Ident(ident) => {
+			punctuated = Punctuated::from_iter(std::iter::once(ident.clone()).chain(edit.into_iter()));
+			Assignee::Field(&punctuated)
+		}
+		Assignee::None => Assignee::Field(&edit)
+	};
+	
+	let let_ = syn::Ident::new("let", arrow.spans[1]);
+	let mut eq = Punct::new('=', Spacing::Alone);
+	eq.set_span(arrow.spans[0]);
+	settings.extend(quote![#(#attrs)* #let_ _ #eq #assignee;]);
+	
+	for content in content { content::expand(
+		content, objects, builders, settings, bindings, &attrs, assignee, None
+	) }
 }

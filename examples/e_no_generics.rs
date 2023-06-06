@@ -6,8 +6,7 @@
 
 use declarative::{builder_mode, clone, view};
 use gtk::{glib, prelude::*};
-use once_cell::unsync::OnceCell;
-use std::{cell::{RefCell, RefMut}, rc::Rc};
+use std::{cell::{OnceCell, RefCell, RefMut}, rc::Rc};
 
 // let's take advantage of the previous example, where we dedicate a generic for a closure that
 // refreshed the view, but now we're going to avoid it, which has its advantages and disadvantages
@@ -16,6 +15,7 @@ struct State { count: i32 }
 
 // we need a struct that contains the widgets with “properties” marked with 'bind:
 struct Widgets { window: gtk::ApplicationWindow, label: gtk::Label }
+// in the future declarative should be able to create structures automatically
 
 struct View { // now there are no generics
 	  state: RefCell<State>,
@@ -56,10 +56,9 @@ impl View {
 			
 			gtk::HeaderBar #titlebar(&#) { }
 			
-			'bind if state.count % 2 == 0 {
-				set_title: Some("The value is even")
-			} else {
-				set_title: Some("The value is odd")
+			'bind match state.count % 2 == 0 {
+				true  => set_title: Some("The value is even")
+				false => set_title: Some("The value is odd")
 			}
 			
 			gtk::Grid #child(&#) !{

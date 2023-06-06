@@ -84,7 +84,7 @@ mod some_module {
 	
 	view! {
 		String mut main_string {
-			push_str: &first // `first` is another item (at the end of this view)
+			push_str: &first // `first` is another item at the end of this view
 			
 			// this is a composition:
 			String mut { // no need to name items (a name is generated)
@@ -109,7 +109,7 @@ mod some_module {
 			
 			// `@extensions(#)` are useful for sharing a view edit; we are extending `main_string`:
 			@add_five_and_six(&mut #) // remember the `add_five_and_six()` function above
-			// unlike an interpolation, it cannot go before a brace
+			// unlike an #interpolation, it cannot go before a brace
 			
 			// you can also compose with `ref`:
 			ref string_before_view #push_str(&#) { push_str: "7, " }
@@ -131,14 +131,14 @@ mod some_module {
 	});
 }
 
-// declarative allows methods to be chained with the exclamation mark before the brace,
-// like so: `Type !{ }` or `expression() !{ }` (really only type paths are supported)
+// declarative allows method calls `to().be().chained()` with the exclamation mark before the
+// brace, like so: `Type !{ }` or `expression() !{ }` (really only type paths are supported)
 //
 // if only a type is specified, the function `Type::default()` is assumed, but it is
 // possible to change the associated function and even auto-chain a last method with
 // the `builder-mode` feature, which requires a `builder_mode!` macro in the scope
 //
-// the `gtk-rs` feature already activates this one plus the macro to import;
+// the `gtk-rs` feature already activates this one plus a macro to import;
 // however, let's not include the macro to explain it here:
 
 macro_rules! builder_mode {
@@ -151,11 +151,16 @@ macro_rules! builder_mode {
 	
 	// 3) when a type is specified and the mode is terminated
 	//    without an auto-chained last method (with ~~ or ~~/)
-	(~$type:ty => $($token:tt)*) => { <$type>::builder() $($token)* };
+	(~$type:ty => $($methods:tt)*) => { <$type>::builder() $($methods)* };
 	
 	// 4) the above but with an auto-chained last method (with ~ or ~/)
-	( $type:ty => $($token:tt)*) => { <$type>::builder() $($token)*.build() };
+	( $type:ty => $($methods:tt)*) => { <$type>::builder() $($methods)*.build() };
 }
+
+// two cases are still missing but they behave like the first two
+//
+// the `z_besides` example explains how it works, as for the
+// macro content you can see the source code of `builder_mode!`
 
 use gtk::{glib, prelude::*};
 
@@ -166,7 +171,7 @@ use gtk::{glib, prelude::*};
 		application: app
 		title: "Title"
 		
-		// the interpolation calls a builder method:
+		// the #interpolation calls a builder method:
 		gtk::HeaderBar #titlebar(&#) { }
 		
 		// we end the builder mode above with a single tilde, which means that a `.build()` will be

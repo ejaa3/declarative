@@ -6,8 +6,7 @@
 
 use declarative::{builder_mode, clone, view};
 use gtk::{glib, prelude::*};
-use once_cell::unsync::OnceCell;
-use std::{cell::{RefCell, RefMut}, rc::Rc};
+use std::{cell::{OnceCell, RefCell, RefMut}, rc::Rc};
 
 // let's make the previous example work without using
 // channels as in the example `d_no_channels` (using generics)
@@ -72,7 +71,7 @@ impl Child<(), ()> { // now we don't have to specify P and R in `Child::<P, R>::
 }
 
 // https://doc.rust-lang.org/rust-by-example/fn/closures/anonymity.html
-impl<P, U> Child<P, U> where P: Fn(&str), U: Fn(u8) { // one more time
+impl<P, R> Child<P, R> where P: Fn(&str), R: Fn(u8) { // one more time
 	fn refresh(&self) {
 		self.data.get().unwrap().1 (*self.count.borrow())
 	}
@@ -89,10 +88,10 @@ impl<P, U> Child<P, U> where P: Fn(&str), U: Fn(u8) { // one more time
 	}
 }
 
-struct Parent<U> { refresh: OnceCell<U> } // has no state
+struct Parent<R> { refresh: OnceCell<R> } // has no state
 
 #[view]
-impl<U> Parent<U> {
+impl<R> Parent<R> {
 	fn start(app: &gtk::Application) {
 		let this = Rc::new(Parent { refresh: OnceCell::new() });
 		let first_child = Child::new("First", this.clone());
@@ -104,7 +103,7 @@ impl<U> Parent<U> {
 		window.present()
 	}
 	
-	fn notify_child_update(&self, nth: &str) where U: Fn(&str) {
+	fn notify_child_update(&self, nth: &str) where R: Fn(&str) {
 		self.refresh.get().unwrap() (nth)
 	}
 	

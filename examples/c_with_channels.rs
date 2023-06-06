@@ -83,7 +83,7 @@ impl State {
 			
 			// the following closure requires `window` because of the 'bind above:
 			@refresh = {
-				// we clone `window` to move the clone to the closure and thus be able to return `window`:
+				// we clone `window` to move the clone to the closure and thus be able to present it:
 				clone![window]; move |state: &Self| bindings!()
 				// this time the closure is outside of `clone!` so that `bindings!` can be expanded
 			}

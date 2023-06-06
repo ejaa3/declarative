@@ -16,7 +16,7 @@ To use it, add to your Cargo.toml:
 
 ~~~ toml
 [dependencies.declarative]
-version = '0.4.1'
+version = '0.5.0'
 
 # for a custom builder mode:
 features = ['builder-mode']

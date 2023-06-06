@@ -4,9 +4,8 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use proc_macro2::{Delimiter, Group, TokenStream};
-use quote::quote;
-use crate::{property, content, ParseReactive};
+use {proc_macro2::{Delimiter, Group, TokenStream}, quote::quote};
+use crate::{property, content, Assignee, Builder, Bindings, ParseReactive};
 
 pub enum Inner<T> {
 	   If (Vec<syn::Attribute>, Vec<If<T>>),
@@ -19,12 +18,14 @@ impl<T: Expand> ParseReactive for Inner<T> {
 	         attrs: Option<Vec<syn::Attribute>>,
 	      reactive: bool,
 	) -> syn::Result<Self> {
-		// it is possible to put a condition after the arrow of the match arm:
+		// it is possible to put something after the match arrow:
 		let map = || input.call(syn::Attribute::parse_outer);
 		
 		if input.peek(syn::Token![if]) {
 			let attrs = attrs.map_or_else(map, Result::Ok)?;
-			Ok(Inner::If(attrs, parse_vec(input, reactive)?))
+			let mut vec = vec![If::parse(input, None, reactive)?];
+			while input.peek(syn::Token![else]) { vec.push(If::parse(input, None, reactive)?) }
+			Ok(Inner::If(attrs, vec))
 		} else if input.peek(syn::Token![match]) {
 			let attrs = attrs.map_or_else(map, Result::Ok)?;
 			Ok(Inner::Match(attrs, ParseReactive::parse(input, None, reactive)?))
@@ -36,134 +37,98 @@ impl<T: Expand> ParseReactive for Inner<T> {
 
 pub(crate) fn expand<T: Expand>(
 	   inner: Inner<T>,
-	 objects: &mut TokenStream,
-	builders: &mut Vec<crate::Builder>,
 	settings: &mut TokenStream,
-	bindings: &mut crate::Bindings,
-	   block: Option<&mut TokenStream>,
-	    name: &[&syn::Ident],
+	bindings: &mut Bindings,
+	  pattrs: &[syn::Attribute],
+	assignee: Assignee,
+	    bind: Option<bool>,
 ) {
+	macro_rules! stream {
+		($expr:expr) => {
+			let stream = $expr;
+			
+			if let Some(set) = bind {
+				if set { settings.extend(stream.clone()) }
+				bindings.stream.extend(stream)
+			} else { settings.extend(stream) }
+		};
+	}
+	
 	match inner {
-		Inner::If(attrs, if_vec) => if let Some(block) = block {
-			block.extend(quote![#(#attrs)*]);
+		Inner::If(attrs, if_vec) => {
+			stream!(quote![#(#pattrs)* #(#attrs)*]);
 			
-			for If { else_, if_, expr, inner } in if_vec {
-				let mut stream = TokenStream::new();
+			for If { else_, if_, expr, brace, inner } in if_vec {
+				let mut setup = TokenStream::new();
 				
 				for inner in inner { expand(
-					inner, objects, builders, settings, bindings, Some(&mut stream), name
+					inner, &mut setup, bindings, &[], assignee, None
 				) }
 				
-				let body = Group::new(Delimiter::Brace, stream);
-				block.extend(quote![#else_ #if_ #expr #body]);
-			}
-		} else {
-			settings.extend(quote![#(#attrs)*]);
-			
-			for If { else_, if_, expr, inner } in if_vec {
-				let  objects = &mut TokenStream::new();
-				let builders = &mut vec![];
-				let    setup = &mut TokenStream::new();
-				
-				for inner in inner { expand(
-					inner, objects, builders, setup, bindings, None, name
-				) }
-				
-				let builders = builders.iter().rev();
-				settings.extend(quote![#else_ #if_ #expr { #objects #(#builders;)* #setup #block }]);
+				let mut body = Group::new(Delimiter::Brace, setup);
+				body.set_span(brace.span.join());
+				stream!(quote![#else_ #if_ #expr #body]);
 			}
 		}
 		Inner::Match(attrs, match_) => {
 			let Match { token, expr, arms } = *match_;
+			stream!(quote![#(#pattrs)* #(#attrs)*]);
 			
-			if let Some(block) = block {
-				block.extend(quote![#(#attrs)*]);
+			let body = arms.into_iter().map(|Arm { attrs, pat, guard, arrow, brace, body }| {
+				let (if_, expr) = guard.as_deref().map(|(a, b)| (a, b)).unzip();
+				let mut setup = TokenStream::new();
 				
-				let body = TokenStream::from_iter(arms.into_iter()
-					.map(|Arm { attrs, pat, guard, arrow, body }| {
-						let mut stream = TokenStream::new();
-						let (if_, expr) = guard.as_deref().map(|(a, b)| (a, b)).unzip();
-						
-						for inner in body { expand(
-							inner, objects, builders, settings, bindings, Some(&mut stream), name
-						) }
-						
-						let body = Group::new(Delimiter::Brace, stream);
-						quote![#(#attrs)* #pat #if_ #expr #arrow #body]
-					}));
+				for inner in body { expand(
+					inner, &mut setup, bindings, &[], assignee, None
+				) }
 				
-				let body = Group::new(Delimiter::Brace, body);
-				block.extend(quote![#token #expr #body])
-			} else {
-				settings.extend(quote![#(#attrs)*]);
-				
-				let body = arms.into_iter().map(|Arm { attrs, pat, guard, arrow, body }| {
-					let (if_, expr) = guard.as_deref().map(|(a, b)| (a, b)).unzip();
-					let  objects = &mut TokenStream::new();
-					let builders = &mut vec![];
-					let    setup = &mut TokenStream::new();
-					
-					for inner in body { expand(
-						inner, objects, builders, setup, bindings, None, name
-					) }
-					
-					let builders = builders.iter().rev();
-					
-					quote![#(#attrs)* #pat #if_ #expr #arrow {
-						#objects #(#builders;)* #setup #block
-					}]
-				});
-				
-				settings.extend(quote![#token #expr { #(#body)* }])
-			}
+				let mut body = Group::new(Delimiter::Brace, setup);
+				if let Some(brace) = brace { body.set_span(brace.span.join()); } // WARNING not always hygienic
+				quote![#(#attrs)* #pat #if_ #expr #arrow #body]
+			});
+			
+			stream!(quote![#token #expr { #(#body)* }]);
 		}
 		Inner::Prop(prop) => {
-			let stream = prop.expand(name, objects, builders, settings, bindings);
-			if let Some(block) = block { block.extend(stream) }
+			let  objects = &mut TokenStream::new();
+			let builders = &mut vec![];
+			let    setup = &mut TokenStream::new();
+			
+			prop.expand(assignee, objects, builders, setup, bindings);
+			
+			let builders = builders.iter().rev();
+			stream!(quote![#objects #(#builders;)* #setup]);
 		}
 	}
 }
 
 pub(crate) trait Expand: ParseReactive {
-	fn expand(self, name: &[&syn::Ident],
-		 objects: &mut TokenStream, builders: &mut Vec<crate::Builder>,
-		settings: &mut TokenStream, bindings: &mut crate::Bindings,
-	) -> Option<TokenStream>;
-}
-
-impl Expand for property::Prop {
-	fn expand(self, name: &[&syn::Ident],
-		 objects: &mut TokenStream, builders: &mut Vec<crate::Builder>,
-		settings: &mut TokenStream, bindings: &mut crate::Bindings,
-	) -> Option<TokenStream> {
-		property::expand(self, objects, builders, settings, bindings, &[], name, None)
-	}
+	fn expand(self, assignee: Assignee,
+		 objects: &mut TokenStream, builders: &mut Vec<Builder>,
+		settings: &mut TokenStream, bindings: &mut Bindings,
+	);
 }
 
 impl Expand for Box<property::Prop> {
-	fn expand(self, name: &[&syn::Ident],
-		 objects: &mut TokenStream, builders: &mut Vec<crate::Builder>,
-		settings: &mut TokenStream, bindings: &mut crate::Bindings,
-	) -> Option<TokenStream> {
-		property::expand(*self, objects, builders, settings, bindings, &[], name, None)
-	}
+	fn expand(self, assignee: Assignee,
+		 objects: &mut TokenStream, builders: &mut Vec<Builder>,
+		settings: &mut TokenStream, bindings: &mut Bindings,
+	) { property::expand(*self, objects, builders, settings, bindings, &[], assignee, None) }
 }
 
 impl Expand for content::Content {
-	fn expand(self, name: &[&syn::Ident],
-		 objects: &mut TokenStream, builders: &mut Vec<crate::Builder>,
-		settings: &mut TokenStream, bindings: &mut crate::Bindings,
-	) -> Option<TokenStream> {
-		content::expand(self, objects, builders, settings, bindings, &[], name, None);
-		None
-	}
+	fn expand(self, assignee: Assignee,
+		 objects: &mut TokenStream, builders: &mut Vec<Builder>,
+		settings: &mut TokenStream, bindings: &mut Bindings,
+	) { content::expand(self, objects, builders, settings, bindings, &[], assignee, None) }
 }
 
 pub struct If<T> {
-	pub else_: Option<syn::Token![else]>,
-	pub   if_: Option<syn::Token![if]>,
-	pub  expr: Option<Box<syn::Expr>>,
-	pub inner: Vec<Inner<T>>,
+	else_: Option<syn::Token![else]>,
+	  if_: Option<syn::Token![if]>,
+	 expr: Option<Box<syn::Expr>>,
+	brace: syn::token::Brace,
+	inner: Vec<Inner<T>>,
 }
 
 impl<T: Expand> ParseReactive for If<T> {
@@ -177,24 +142,12 @@ impl<T: Expand> ParseReactive for If<T> {
 			Some(Box::new(input.call(syn::Expr::parse_without_eager_brace)?))
 		} else { None };
 		
-		let inner = crate::parse_vec(input, reactive)?;
-		Ok(If { else_, if_, expr, inner })
+		let (brace, inner) = crate::parse_vec(input, reactive)?;
+		Ok(If { else_, if_, expr, brace, inner })
 	}
 }
 
-pub(crate) fn parse_vec<T: ParseReactive>(
-	input: syn::parse::ParseStream, reactive: bool
-) -> syn::Result<Vec<T>> {
-	let mut vec = vec![T::parse(input, None, reactive)?];
-	while input.peek(syn::Token![else]) { vec.push(T::parse(input, None, reactive)?); }
-	Ok(vec)
-}
-
-pub struct Match<T> {
-	pub token: syn::Token![match],
-	pub  expr: syn::Expr,
-	pub  arms: Vec<Arm<T>>,
-}
+pub struct Match<T> { token: syn::Token![match], expr: syn::Expr, arms: Vec<Arm<T>> }
 
 impl<T: Expand> ParseReactive for Box<Match<T>> {
 	fn parse(input: syn::parse::ParseStream,
@@ -210,24 +163,30 @@ impl<T: Expand> ParseReactive for Box<Match<T>> {
 	}
 }
 
-pub struct Arm<T> {
-	pub attrs: Vec<syn::Attribute>,
-	pub   pat: syn::Pat,
-	pub guard: Option<Box<(syn::Token![if], syn::Expr)>>,
-	pub arrow: syn::Token![=>],
-	pub  body: Vec<Inner<T>>,
+struct Arm<T> {
+	attrs: Vec<syn::Attribute>,
+	  pat: syn::Pat,
+	guard: Option<Box<(syn::Token![if], syn::Expr)>>,
+	arrow: syn::Token![=>],
+	brace: Option<syn::token::Brace>,
+	 body: Vec<Inner<T>>,
 }
 
 impl<T: Expand> syn::parse::Parse for Arm<T> {
 	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-		Ok(Arm {
-			attrs: input.call(syn::Attribute::parse_outer)?,
-			  pat: input.call(syn::Pat::parse_multi_with_leading_vert)?,
-			guard: input.parse::<syn::Token![if]>().ok()
-				.map(|if_| Ok::<_, syn::Error>(Box::new((if_, input.parse()?))))
-				.transpose()?,
-			arrow: input.parse()?,
-			 body: crate::parse_vec(input, false)?,
-		})
+		let attrs = input.call(syn::Attribute::parse_outer)?;
+		let pat = input.call(syn::Pat::parse_multi_with_leading_vert)?;
+		
+		let guard = if let Ok(if_) = input.parse::<syn::Token![if]>() {
+			Some(Box::new((if_, input.parse()?)))
+		} else { None };
+		
+		let arrow = input.parse()?;
+		
+		let (brace, body) = if let Ok((brace, body)) = crate::parse_vec(input, false) {
+			(Some(brace), body)
+		} else { (None, vec![Inner::parse(input, None, false)?]) };
+		
+		Ok(Arm { attrs, pat, guard, arrow, brace, body })
 	}
 }

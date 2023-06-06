@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Unlicense
 
 [package]
+exclude     = ['/tests']
 name        = 'declarative-macros'
 authors     = { workspace = true }
 categories  = { workspace = true }
