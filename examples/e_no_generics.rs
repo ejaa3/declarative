@@ -13,9 +13,10 @@ use std::{cell::{OnceCell, RefCell, RefMut}, rc::Rc};
 
 struct State { count: i32 }
 
-// we need a struct that contains the widgets with “properties” marked with 'bind:
-struct Widgets { window: gtk::ApplicationWindow, label: gtk::Label }
-// in the future declarative should be able to create structures automatically
+struct Widgets { // we need a struct that contains the widgets with “properties” marked with 'bind
+	window: gtk::ApplicationWindow,
+	 label: gtk::Label, // declarative allows generating these structures semi-automatically
+} // however we will do so in the next example (`f_templates`)
 
 struct View { // now there are no generics
 	  state: RefCell<State>,

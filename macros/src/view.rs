@@ -4,51 +4,100 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use std::{collections::VecDeque, mem::take};
-use proc_macro2::{Delimiter, Group, Span, TokenStream};
-use quote::{TokenStreamExt, quote};
-use syn::{parse::{Parse, ParseStream}, visit_mut::VisitMut};
-use crate::{item, Assignee, Bindings, Builder, Path};
+use proc_macro2::{Delimiter, Group, Punct, Spacing, Span, TokenStream};
+use quote::TokenStreamExt;
+use syn::{punctuated::Punctuated, visit_mut::VisitMut};
+use crate::{item, Assignee, Attributes, Bindings, Path};
 
-pub struct Roots(Vec<item::Item>);
+pub enum Root { Struct(syn::ItemStruct), Item(item::Item) }
 
-impl Parse for Roots {
-	fn parse(input: ParseStream) -> syn::Result<Self> {
+pub struct Roots(Vec<Root>);
+
+impl syn::parse::Parse for Roots {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
 		let mut props = vec![];
+		
 		while !input.is_empty() {
 			let attrs = input.call(syn::Attribute::parse_outer)?;
-			props.push(item::parse(input, attrs, true, true)?)
+			
+			if input.peek(syn::Token![pub]) || input.peek(syn::Token![struct]) {
+				let mut item = input.parse::<syn::ItemStruct>()?;
+				
+				let syn::Fields::Named(_) = item.fields else { Err(
+					syn::Error::new_spanned(item, "must be a struct with braces (named fields)")
+				)? };
+				
+				item.attrs = attrs; props.push(Root::Struct(item))
+			} else { props.push(Root::Item(item::parse(input, attrs, true)?)) }
 		}
+		
 		Ok(Self(props))
 	}
 }
 
-pub(crate) fn expand(Roots(roots): Roots) -> (TokenStream, Bindings) {
-	let objects  = &mut TokenStream::new();
-	let builders = &mut vec![];
-	let settings = &mut TokenStream::new();
-	let mut bindings = Bindings::default();
+pub(crate) fn expand(
+	items: &mut Vec<syn::ItemStruct>, Roots(roots): Roots
+) -> syn::Result<(TokenStream, Bindings)> {
+	let (mut objects, mut builders, mut settings, mut bindings) = Default::default();
+	let (mut final_struct, mut item_struct) = (false, None);
 	
-	for root in roots { item::expand(
-		root, objects, builders, settings, &mut bindings, &[], Assignee::None, None
-	) }
+	macro_rules! check_struct {
+		($($set:literal)?) => {
+			if let Some(item) = item_struct.take() {
+				if final_struct { return Err(
+					syn::Error::new_spanned(item, "structs must be followed by items")
+				) }
+				$(final_struct = $set;)? items.push(item)
+			}
+		}
+	}
 	
-	let builders = builders.iter().rev();
-	(quote![#objects #(#builders;)* #settings], bindings)
+	for root in roots { match root {
+		Root::Struct (item) => { check_struct!(true); item_struct = Some(item) }
+		Root::Item   (item) => {
+			final_struct = false;
+			
+			let fields = &mut if let Some(item) = item_struct.as_mut() {
+				let syn::Fields::Named(named) = &mut item.fields else { panic!() };
+				Some(&mut named.named)
+			} else { None };
+			
+			item::expand(
+				item, &mut objects, &mut builders, &mut settings, &mut bindings,
+				fields, crate::Attributes::Some(&[]), Assignee::None, None
+			)?;
+		}
+	} }
+	
+	check_struct! { }
+	for builder in builders.into_iter().rev() { builder.extend_into(&mut objects) }
+	objects.extend(settings); Ok((objects, bindings))
 }
 
-pub struct Visitor { pub(crate) deque: VecDeque<(TokenStream, Bindings)> }
+pub(crate) enum Visitor {
+	Error(syn::Error), Ok {
+		items: Vec<syn::ItemStruct>,
+		deque: std::collections::VecDeque<(TokenStream, Bindings)>,
+	}
+}
 
 macro_rules! item {
 	($visit:ident: $item:ident) => {
 		fn $visit(&mut self, node: &mut syn::$item) {
+			let Self::Ok { items, deque } = self else { return };
+			
 			if let syn::$item::Macro(mac) = node {
 				if mac.mac.path.is_ident("view") {
-					self.deque.push_back(mac.mac.parse_body().map(expand)
-						.unwrap_or_else(|error| (
-							error.into_compile_error(), Bindings::default()
-						)));
-					return *node = syn::$item::Verbatim(TokenStream::new())
+					return match mac.mac.parse_body().map(|root| expand(items, root)) {
+						Ok(expansion) => match expansion {
+							Ok(tuple) => {
+								deque.push_back(tuple);
+								*node = syn::$item::Verbatim(TokenStream::new())
+							}
+							Err(error) => *self = Self::Error(error)
+						}
+						Err(error) => *self = Self::Error(error)
+					}
 				}
 			}
 			syn::visit_mut::$visit(self, node)
@@ -65,29 +114,21 @@ impl VisitMut for Visitor {
 
 const ERROR: &str = "views must be consumed with the `expand_view_here!` placeholder macro";
 
-pub fn bindings_error(stream: &mut TokenStream, spans: Vec<Span>) {
-	for span in spans {
-		stream.extend(syn::Error::new(span, crate::ERROR).to_compile_error());
-	}
-}
-
-pub(crate) fn parse(file: &mut syn::File, output: &mut TokenStream, view: (TokenStream, Bindings)) {
-	let (stream, bindings) = view;
-	
+pub(crate) fn parse(
+	item: &mut syn::Item, output: &mut TokenStream, stream: TokenStream, bindings: Bindings
+) -> syn::Result<()> {
 	let mut visitor = crate::Visitor { placeholder: "expand_view_here", stream: Some(stream) };
-	visitor.visit_file_mut(file);
+	visitor.visit_item_mut(item);
 	
-	if let Some(stream) = visitor.stream {
-		output.extend(syn::Error::new_spanned(stream, ERROR).into_compile_error())
-	}
+	if let Some(stream) = visitor.stream { Err(syn::Error::new_spanned(stream, ERROR))? }
 	
 	if !bindings.spans.is_empty() {
 		let stream = Some(bindings.stream);
 		let mut visitor = crate::Visitor { placeholder: "bindings", stream };
-		visitor.visit_file_mut(file);
+		visitor.visit_item_mut(item);
 		
-		if visitor.stream.is_some() { bindings_error(output, bindings.spans) }
-	}
+		if visitor.stream.is_some() { crate::bindings_error(output, bindings.spans) }
+	} Ok(())
 }
 
 impl<'a> crate::Assignee<'a> {
@@ -110,6 +151,21 @@ impl<'a> crate::Assignee<'a> {
 	}
 }
 
+impl<T: AsRef<[syn::Attribute]>> Attributes<T> {
+	pub fn get<'a>(&'a self, fields: &'a mut Option<&mut Punctuated<syn::Field, syn::Token![,]>>) -> &[syn::Attribute] {
+		match self {
+			Self::Some(value) => value.as_ref(),
+			Self::None(index) => &fields.as_deref().unwrap().iter().nth(*index).unwrap().attrs,
+		}
+	}
+	pub fn as_slice(&self) -> Attributes<&[syn::Attribute]> {
+		match self {
+			Self::Some(value) => Attributes::Some(value.as_ref()),
+			Self::None(index) => Attributes::None(*index),
+		}
+	}
+}
+
 impl quote::ToTokens for crate::Assignee<'_> {
 	fn to_tokens(&self, tokens: &mut TokenStream) {
 		match self {
@@ -120,38 +176,63 @@ impl quote::ToTokens for crate::Assignee<'_> {
 	}
 }
 
-impl quote::ToTokens for Builder {
-	fn to_tokens(&self, tokens: &mut TokenStream) {
+impl crate::Builder {
+	pub fn extend_into(self, objects: &mut TokenStream) {
 		match self {
 			#[cfg(not(feature = "builder-mode"))]
-			Builder::Builder(stream) => stream.to_tokens(tokens),
+			Self::Builder(stream, _) => objects.extend(stream),
 			
 			#[cfg(feature = "builder-mode")]
-			Builder::Builder { left, right, span, tilde } => {
-				left.to_tokens(tokens);
-				tokens.extend(quote::quote_spanned! {
-					*span => builder_mode!(#tilde #right)
+			Self::Builder { left, right, span, tilde } => {
+				objects.extend(left);
+				objects.extend(quote::quote_spanned! {
+					span => builder_mode!(#tilde #right)
 				})
 			}
-			
 			#[cfg(not(feature = "builder-mode"))]
-			Builder::Struct { ty, fields, call } => {
-				ty.to_tokens(tokens);
-				tokens.append(Group::new(Delimiter::Brace, take(&mut fields.borrow_mut())));
-				if let Some(call) = call { call.to_tokens(tokens); }
+			Self::Struct { ty, fields, call, span } => {
+				objects.extend(ty);
+				let mut fields = Group::new(Delimiter::Brace, fields);
+				fields.set_span(span);
+				objects.append(fields);
+				if let Some(call) = call { objects.extend(call) }
 			}
-			
 			#[cfg(feature = "builder-mode")]
-			Builder::Struct { left, ty, fields, span, tilde } => {
-				left.to_tokens(tokens);
-				let fields = Group::new(Delimiter::Brace, take(&mut fields.borrow_mut()));
-				let  value = Group::new(Delimiter::Parenthesis, quote![#ty #fields]);
+			Self::Struct { left, mut ty, fields, span, tilde } => {
+				objects.extend(left);
 				
-				tokens.extend(quote::quote_spanned! {
-					*span => builder_mode!(#tilde #value)
+				let mut fields = Group::new(Delimiter::Brace, fields);
+				fields.set_span(span);
+				ty.append(fields);
+				
+				let mut value = Group::new(Delimiter::Parenthesis, ty);
+				value.set_span(span);
+				
+				objects.extend(quote::quote_spanned! {
+					span => builder_mode!(#tilde #value)
 				})
 			}
 		}
+		objects.append(Punct::new(';', Spacing::Alone))
+	}
+}
+
+impl syn::parse::Parse for crate::Field {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		let (vis, mut_) = (input.parse()?, input.parse()?);
+		
+		let (name, colon) = match vis {
+			syn::Visibility::Inherited => match input.parse()? {
+				Some(name) => (name, input.parse()?),
+				None => (syn::Ident::new(&crate::count(), Span::call_site()), None)
+			}
+			_ => (input.parse()?, Some(input.parse()?))
+		};
+		
+		let ty = colon.is_some() && (input.peek(syn::Token![<]) || input.peek(syn::Ident));
+		let ty = ty.then(|| input.parse()).transpose()?;
+		
+		Ok(crate::Field { vis, mut_, name, colon, ty })
 	}
 }
 
@@ -160,10 +241,17 @@ impl crate::Path {
 		let Self::Type(path) = self else { return false };
 		path.path.segments.len() > 1 || path.qself.is_some()
 	}
+	
+	pub fn span(&self) -> Span {
+		match self {
+			Path::Type(ty) => ty.path.segments.last().map(|seg| seg.ident.span()),
+			Path::Field { access, .. } => access.last().map(syn::Ident::span),
+		}.unwrap_or(Span::call_site())
+	}
 }
 
 impl syn::parse::Parse for Path {
-	fn parse(input: ParseStream) -> syn::Result<Self> {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
 		if input.peek(syn::Ident) && input.peek2(syn::Token![.]) {
 			let access = crate::parse_unterminated(input)?;
 			let gens = syn::AngleBracketedGenericArguments::parse_turbofish(input).ok();
@@ -192,7 +280,7 @@ impl VisitMut for crate::Visitor {
 			if mac.mac.path.is_ident(self.placeholder) {
 				let group = Group::new(Delimiter::Brace, self.stream.take().unwrap());
 				let mut stream = TokenStream::new(); stream.append(group);
-				return *node = syn::Expr::Verbatim(stream);
+				return *node = syn::Expr::Verbatim(stream)
 			}
 		}
 		syn::visit_mut::visit_expr_mut(self, node)
@@ -205,7 +293,7 @@ impl VisitMut for crate::Visitor {
 			if mac.mac.path.is_ident(self.placeholder) {
 				return *node = syn::Stmt::Expr(
 					syn::Expr::Verbatim(self.stream.take().unwrap()), None
-				);
+				)
 			}
 		}
 		syn::visit_mut::visit_stmt_mut(self, node)

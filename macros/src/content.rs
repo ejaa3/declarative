@@ -4,36 +4,22 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use proc_macro2::{Delimiter, Group, Punct, Spacing, TokenStream};
-use quote::{TokenStreamExt, ToTokens, quote};
-use crate::{conditional, item, property, Builder};
+use proc_macro2::{Delimiter, Group, TokenStream};
+use quote::quote;
+use syn::punctuated::Punctuated;
+use crate::{item, property, Attributed, Builder};
 
 pub enum Content {
-	     Edit (Box<property::Edit>),
-	 Property (Box<property::Prop>),
-	Extension (Box<Extension>),
-	    Built (Box<Built>),
-	     Item (Box<item::Item>),
-	    Inner (Box<conditional::Inner<Content>>),
 	     Bind (Box<Bind>),
 	BindColon (Box<BindColon>),
 	  Binding (Box<Binding>),
-}
-
-pub struct Extension {
-	 attrs: Vec<syn::Attribute>,
-	   ext: syn::TypePath,
-	 paren: syn::token::Paren,
-	tokens: syn::buffer::TokenBuffer,
-	  back: Option<Box<property::Back>>,
-}
-
-pub struct Built {
-	 object: bool,
-	  tilde: syn::Token![~],
-	   last: Option<syn::Token![~]>,
-	 penult: Content,
-	content: Vec<Content>,
+	    Built (Box<Built>),
+	     Edit (Box<property::Edit>),
+	Extension (Box<Extension>),
+	       If (Box<(Vec<syn::Attribute>, Vec<If>)>),
+	     Item (Box<item::Item>),
+	    Match (Box<Match>),
+	 Property (Box<property::Property>),
 }
 
 pub struct Bind {
@@ -43,12 +29,11 @@ pub struct Bind {
 }
 
 pub enum BindMode {
-	Braced {
-		  attrs: Vec<syn::Attribute>,
-		  brace: syn::token::Brace,
-		content: Vec<conditional::Inner<Box<property::Prop>>>
-	},
-	Unbraced (conditional::Inner<Box<property::Prop>>)
+	Unbraced(Content), Braced {
+		attrs: Vec<syn::Attribute>,
+		brace: syn::token::Brace,
+		 body: Vec<Content>,
+	}
 }
 
 pub struct BindColon {
@@ -57,7 +42,7 @@ pub struct BindColon {
 	  if_: syn::Token![if],
 	 cond: syn::Expr,
 	brace: syn::token::Brace,
-	props: Vec<conditional::Inner<Box<property::Prop>>>,
+	 body: Vec<Content>,
 }
 
 pub struct Binding {
@@ -69,122 +54,175 @@ pub struct Binding {
 	 expr: syn::Expr,
 }
 
-impl crate::ParseReactive for Content {
-	fn parse(input: syn::parse::ParseStream,
-	         attrs: Option<Vec<syn::Attribute>>,
-	      reactive: bool,
-	) -> syn::Result<Self> {
-		if let Ok(tilde) = input.parse::<syn::Token![~]>() {
-			let last = input.parse()?;
-			let object = input.parse::<Option<syn::Token![/]>>()?.is_some();
-			let penult = next(input, None, reactive)?;
-			let mut content = vec![]; parse_vec(&mut content, input, reactive)?;
-			
-			return Ok(Content::Built(Box::new(
-				Built { object, tilde, last, penult, content }
-			)))
-		}
+pub struct Built {
+	object: bool,
+	 tilde: syn::Token![~],
+	  last: Option<syn::Token![~]>,
+	penult: Content,
+	  rest: Vec<Content>,
+}
+
+pub struct Extension {
+	 attrs: Vec<syn::Attribute>,
+	   ext: syn::TypePath,
+	 paren: syn::token::Paren,
+	tokens: syn::buffer::TokenBuffer,
+	  back: Option<Box<property::Back>>,
+}
+
+pub struct If {
+	else_: Option<syn::Token![else]>,
+	  if_: Option<syn::Token![if]>,
+	 expr: Option<Box<syn::Expr>>,
+	brace: syn::token::Brace,
+	 body: Vec<Content>,
+}
+
+impl syn::parse::Parse for If {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		let else_ = input.parse()?;
+		let if_: Option<_> = input.parse()?;
+		let expr = if if_.is_some() {
+			Some(Box::new(input.call(syn::Expr::parse_without_eager_brace)?))
+		} else { None };
 		
+		let (brace, body) = crate::parse_vec(input)?;
+		Ok(If { else_, if_, expr, brace, body })
+	}
+}
+
+pub struct Match {
+	attrs: Vec<syn::Attribute>,
+	token: syn::Token![match],
+	 expr: syn::Expr,
+	brace: syn::token::Brace,
+	 arms: Vec<Arm>,
+}
+
+pub struct Arm {
+	attrs: Vec<syn::Attribute>,
+	  pat: syn::Pat,
+	guard: Option<Box<(syn::Token![if], syn::Expr)>>,
+	arrow: syn::Token![=>],
+	brace: Option<syn::token::Brace>,
+	 body: Vec<Content>,
+}
+
+impl syn::parse::Parse for Arm {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		let attrs = input.call(syn::Attribute::parse_outer)?;
+		let pat = input.call(syn::Pat::parse_multi_with_leading_vert)?;
+		
+		let guard = if let Ok(if_) = input.parse::<syn::Token![if]>() {
+			Some(Box::new((if_, input.parse()?)))
+		} else { None };
+		
+		let arrow = input.parse()?;
+		
+		let (brace, body) = if let Ok((brace, body)) = crate::parse_vec(input) {
+			(Some(brace), body)
+		} else { (None, vec![Content::parse(input, None)?]) };
+		
+		Ok(Arm { attrs, pat, guard, arrow, brace, body })
+	}
+}
+
+impl Attributed for Content {
+	fn parse(input: syn::parse::ParseStream, attrs: Option<Vec<syn::Attribute>>) -> syn::Result<Self> {
 		let attrs = attrs.map_or_else(|| input.call(syn::Attribute::parse_outer), Result::Ok)?;
 		
-		if let Ok(token) = input.parse::<syn::Lifetime>() {
+		if let Ok(tilde) = input.parse::<syn::Token![~]>() {
+			let   last = input.parse()?;
+			let object = input.parse::<Option<syn::Token![/]>>()?.is_some();
+			let penult = next(input, attrs)?;
+			let mut rest = vec![]; parse_vec(&mut rest, input)?;
+			
+			Ok(Content::Built(Box::new(
+				Built { object, tilde, last, penult, rest }
+			)))
+		} else if let Ok(token) = input.parse::<syn::Lifetime>() {
 			if token.ident == "bind" {
-				if !reactive { Err(syn::Error::new(token.span(), "cannot use 'bind here")) }
-				else if input.parse::<syn::Token![:]>().is_ok() {
-					let if_ = input.parse::<syn::Token![if]>()?;
-					let cond = input.parse()?;
-					let (brace, props) = crate::parse_vec(input, false)?;
+				if input.parse::<syn::Token![:]>().is_ok() {
+					let (if_, cond) = (input.parse::<syn::Token![if]>()?, input.parse()?);
+					let (brace, body) = crate::parse_vec(input)?;
 					
-					Ok(Content::BindColon(Box::new(BindColon {
-						attrs, token, if_, cond, brace, props
-					})))
+					Ok(Content::BindColon(Box::new(
+						BindColon { attrs, token, if_, cond, brace, body }
+					)))
 				} else {
 					let init = input.parse()?;
 					
-					Ok(if input.peek(syn::token::Brace) {
-						let (brace, content) = crate::parse_vec(input, false)?;
-						Content::Bind(Box::new(Bind {
-							token, init, mode: BindMode::Braced { attrs, brace, content }
-						}))
-					} else {
-						Content::Bind(Box::new(Bind {
-							token, init, mode: BindMode::Unbraced(
-								crate::ParseReactive::parse(input, Some(attrs), false)?
-							)
-						}))
-					})
+					if input.peek(syn::token::Brace) {
+						let (brace, body) = crate::parse_vec(input)?;
+						
+						Ok(Content::Bind(Box::new(Bind {
+							token, init, mode: BindMode::Braced { attrs, brace, body }
+						})))
+					} else { Ok(Content::Bind(Box::new(Bind {
+						token, init, mode: BindMode::Unbraced(Content::parse(input, Some(attrs))?)
+					}))) }
 				}
-			} else {
-				Err(syn::Error::new(
-					token.span(), format!("expected 'bind (or maybe 'back), found {token}")
-				))
-			}
-		} else if input.peek(syn::Token![if]) || input.peek(syn::Token![match]) {
-			Ok(Content::Inner(Box::new(
-				conditional::Inner::parse(input, Some(attrs), false)?
-			)))
+			} else { Err(syn::Error::new(
+				token.span(), format!("expected 'bind (or maybe 'back), found {token}")
+			)) }
 		} else if let Ok(at) = input.parse::<syn::Token![@]>() {
 			if input.peek2(syn::Token![=]) {
-				if !reactive {
-					Err(syn::Error::new(at.span, "cannot consume bindings here"))?
-				}
-				Ok(Content::Binding(Box::new(Binding {
-					attrs, at,
-					 mut_: input.parse()?,
-					 name: input.parse()?,
-					equal: input.parse()?,
-					 expr: input.parse()?,
-				})))
+				let  mut_ = input.parse()?;
+				let  name = input.parse()?;
+				let equal = input.parse()?;
+				let  expr = input.parse()?;
+				let     _ = input.parse::<syn::Token![;]>();
+				Ok(Content::Binding(Box::new(Binding { attrs, at, mut_, name, equal, expr })))
 			} else {
 				let ext = input.parse()?;
 				let parens;
 				let paren = syn::parenthesized!(parens in input);
 				let tokens = syn::buffer::TokenBuffer::new2(parens.parse()?);
-				let back = property::parse_back(input, reactive)?;
+				let back = property::parse_back(input)?;
 				Ok(Content::Extension(Box::new(Extension { attrs, ext, paren, tokens, back })))
 			}
-		} else { Ok(next(input, Some(attrs), reactive)?) }
+		} else if input.peek(syn::Token![if]) {
+			let mut vec = vec![input.parse()?];
+			while input.peek(syn::Token![else]) { vec.push(input.parse()?) }
+			Ok(Content::If(Box::new((attrs, vec))))
+		} else if input.peek(syn::Token![match]) {
+			let token = input.parse()?;
+			let expr = input.call(syn::Expr::parse_without_eager_brace)?;
+			let braces;
+			let brace = syn::braced!(braces in input);
+			let mut arms = vec![];
+			while !braces.is_empty() { arms.push(braces.parse()?) }
+			Ok(Content::Match(Box::new(Match { attrs, token, expr, brace, arms })))
+		} else { Ok(next(input, attrs)?) }
 	}
 }
 
-pub fn parse_vec(
-	 content: &mut Vec<Content>,
-	   input: syn::parse::ParseStream,
-	reactive: bool,
-) -> syn::Result<()> {
-	while !input.is_empty() {
-		content.push(crate::ParseReactive::parse(input, None, reactive)?)
-	} Ok(())
-}
-
-fn next(input: &syn::parse::ParseBuffer,
-        attrs: Option<Vec<syn::Attribute>>,
-     reactive: bool,
-) -> syn::Result<Content> {
-	if input.peek(syn::Token![ref]) {
-		return Ok(Content::Item(Box::new(
-			item::parse(input, attrs.unwrap_or_default(), reactive, false)?
-		)))
-	}
+fn next(input: &syn::parse::ParseBuffer, attrs: Vec<syn::Attribute>) -> syn::Result<Content> {
+	if input.peek(syn::Token![ref]) { return Ok(Content::Item(
+		Box::new(item::parse(input, attrs, false)?)
+	)) }
 	
 	let ahead = input.fork();
-	let path = ahead.parse::<crate::Path>()?;
-	
-	let edit = match path {
+	let  path = ahead.parse::<crate::Path>()?;
+	let  edit = match path {
 		crate::Path::Type(path) => path.path.get_ident().is_some(),
 		crate::Path::Field { gens, .. } => gens.is_none(),
 	};
 	
 	Ok(if edit && ahead.peek(syn::Token![=>]) {
-		Content::Edit(property::parse_edit(input, attrs.unwrap_or_default(), reactive)?)
+		Content::Edit(property::parse_edit(input, attrs)?)
 	} else if ahead.peek(syn::Token![:])
 	       || ahead.peek(syn::Token![;])
 	       || ahead.peek(syn::Token![=])
 	       || ahead.peek(syn::Token![&]) {
-		Content::Property(crate::ParseReactive::parse(input, attrs, reactive)?)
+		Content::Property(Attributed::parse(input, Some(attrs))?)
 	} else {
-		Content::Item(Box::new(item::parse(input, attrs.unwrap_or_default(), reactive, false)?))
+		Content::Item(Box::new(item::parse(input, attrs, false)?))
 	})
+}
+
+pub fn parse_vec(body: &mut Vec<Content>, input: syn::parse::ParseStream) -> syn::Result<()> {
+	while !input.is_empty() { body.push(Content::parse(input, None)?) } Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -194,48 +232,80 @@ pub(crate) fn expand(
 	builders: &mut Vec<Builder>,
 	settings: &mut TokenStream,
 	bindings: &mut crate::Bindings,
-	  pattrs: &[syn::Attribute],
+	  fields: &mut Option<&mut Punctuated<syn::Field, syn::Token![,]>>,
+	  pattrs: crate::Attributes<&[syn::Attribute]>,
 	assignee: crate::Assignee,
 	 builder: Option<usize>,
-) {
+) -> syn::Result<()> {
 	match content {
-		Content::Edit(edit) => property::expand_edit(
-			*edit, objects, builders, settings, bindings, pattrs, assignee
-		),
-		Content::Property(prop) => property::expand(
-			*prop, objects, builders, settings, bindings, pattrs, assignee, builder
-		),
-		Content::Extension(extension) => {
-			let Extension { mut attrs, ext, paren, tokens, back } = *extension;
+		Content::Bind(bind) => {
+			let Bind { token, init, mode } = *bind;
+			bindings.spans.push(token.span());
+			
+			match mode {
+				BindMode::Braced { attrs, brace, body } => {
+					let mut stream = TokenStream::new();
+					
+					for content in body { expand(
+						content, objects, builders, &mut stream, bindings,
+						&mut None, crate::Attributes::Some(&[]), assignee, None
+					)? }
+					
+					let mut body = Group::new(Delimiter::Brace, stream);
+					body.set_span(brace.span.join());
+					
+					let pattrs = pattrs.get(fields);
+					let body = quote![#(#pattrs)* #(#attrs)* #body];
+					if init.is_some() { settings.extend(body.clone()) }
+					bindings.stream.extend(body)
+				}
+				BindMode::Unbraced(content) => {
+					let mut body = TokenStream::new();
+					expand(
+						content, objects, builders, &mut body, bindings,
+						&mut None, crate::Attributes::Some(&[]), assignee, None
+					)?;
+					if init.is_some() { settings.extend(body.clone()) }
+					bindings.stream.extend(body)
+				}
+			} Ok(())
+		}
+		Content::BindColon(bind_colon) => {
+			let BindColon { attrs, token, if_, cond, brace, body } = *bind_colon;
 			let mut stream = TokenStream::new();
 			
-			if crate::find_pound(&mut tokens.begin(), &mut stream, assignee) {
-				let mut group = Group::new(Delimiter::Parenthesis, stream);
-				group.set_span(paren.span.join());
-				
-				if let Some(back) = back {
-					crate::extend_attributes(&mut attrs, pattrs);
-					property::expand_back(
-						*back, objects, builders, settings, bindings, attrs, quote![#ext #group]
-					)
-				} else { settings.extend(quote![#(#pattrs)* #(#attrs)* #ext #group;]) }
-			} else {
-				objects.extend(syn::Error::new(
-					tokens.begin().span(), "no single `#` found around here"
-				).into_compile_error())
-			}
+			for content in body { expand(
+				content, objects, builders, &mut stream, bindings,
+				&mut None, crate::Attributes::Some(&[]), assignee, None
+			)? }
+			
+			let mut body = Group::new(Delimiter::Brace, stream);
+			body.set_span(brace.span.join());
+			
+			let pattrs = pattrs.get(fields);
+			bindings.spans.push(token.span());
+			bindings.stream.extend(quote![#(#pattrs)* #(#attrs)* #if_ #cond #body]);
+			Ok(settings.extend(quote![#(#pattrs)* #(#attrs)* #body]))
+		}
+		Content::Binding(binding) => {
+			let Binding { attrs, at, mut_, name, equal, mut expr } = *binding;
+			crate::try_bind(at, bindings, &mut expr)?;
+			
+			let pattrs = pattrs.get(fields);
+			let let_ = syn::Ident::new("let", at.span);
+			
+			Ok(settings.extend(quote![#(#pattrs)* #(#attrs)* #let_ #mut_ #name #equal #expr;]))
 		}
 		Content::Built(built) => {
-			let Built { object, tilde, last, penult, content } = *built;
+			let Built { object, tilde, last, penult, rest } = *built;
 			
 			let Some(index) = builder else {
-				let error = syn::Error::new(tilde.span, "only allowed in builder or struct mode");
-				return objects.extend(error.into_compile_error())
+				Err(syn::Error::new(tilde.span, "only allowed in builder mode"))?
 			};
 			
 			match &mut builders[index] {
 				#[cfg(not(feature = "builder-mode"))]
-				Builder::Builder(_) => { }
+				Builder::Builder(_, span) => *span = tilde.span,
 				
 				#[cfg(feature = "builder-mode")]
 				Builder::Builder { span, tilde: t, .. } |
@@ -245,61 +315,90 @@ pub(crate) fn expand(
 				Builder::Struct { call, .. } => *call = last.is_none().then(TokenStream::new)
 			}
 			
-			expand(penult, objects, builders, settings, bindings, pattrs, assignee, builder);
+			expand(penult, objects, builders, settings, bindings, fields, pattrs, assignee, builder)?;
 			
-			if object {
-				builders.remove(index).to_tokens(objects);
-				objects.append(Punct::new(';', Spacing::Alone));
-			}
+			if object { builders.remove(index).extend_into(objects) }
 			
-			for content in content { expand(
-				content, objects, builders, settings, bindings, pattrs, assignee, None
-			) }
+			for content in rest { expand(
+				content, objects, builders, settings, bindings, fields, pattrs, assignee, None
+			)? } Ok(())
+		}
+		Content::Edit(edit) => property::expand_edit(
+			*edit, objects, builders, settings, bindings, fields, pattrs, assignee
+		),
+		Content::Extension(extension) => {
+			let Extension { mut attrs, ext, paren, tokens, back } = *extension;
+			let mut stream = TokenStream::new();
+			
+			if crate::find_pound(&mut tokens.begin(), &mut stream, assignee) {
+				let pattrs = pattrs.get(fields);
+				let mut group = Group::new(Delimiter::Parenthesis, stream);
+				group.set_span(paren.span.join());
+				
+				if let Some(back) = back {
+					crate::extend_attributes(&mut attrs, pattrs);
+					property::expand_back(
+						*back, objects, builders, settings, bindings, fields,
+						crate::Attributes::Some(attrs), quote![#ext #group]
+					)
+				} else { Ok(settings.extend(quote![#(#pattrs)* #(#attrs)* #ext #group;])) }
+			} else { Err(syn::Error::new(tokens.begin().span(), "no single `#` found around here")) }
+		}
+		Content::If(if_) => {
+			let (pattrs, (attrs, if_vec)) = (pattrs.get(fields), *if_);
+			settings.extend(quote![#(#pattrs)* #(#attrs)*]);
+			
+			for If { else_, if_, expr, brace, body } in if_vec {
+				let (mut objects, mut builders, mut setup, mut bindings) = Default::default();
+				
+				for content in body { expand(
+					content, &mut objects, &mut builders, &mut setup, &mut bindings,
+					&mut None, crate::Attributes::Some(&[]), assignee, None
+				)? }
+				
+				crate::bindings_error(&mut setup, bindings.spans);
+				
+				for builder in builders.into_iter().rev() { builder.extend_into(&mut objects) }
+				objects.extend(setup);
+				
+				let mut body = Group::new(Delimiter::Brace, objects);
+				body.set_span(brace.span.join());
+				
+				settings.extend(quote![#else_ #if_ #expr #body])
+			} Ok(())
 		}
 		Content::Item(item) => item::expand(
-			*item, objects, builders, settings, bindings, pattrs, assignee, builder
+			*item, objects, builders, settings, bindings, fields, pattrs, assignee, builder
 		),
-		Content::Inner(inner) => conditional::expand(
-			*inner, settings, bindings, pattrs, assignee, None
-		),
-		Content::BindColon(bind_colon) => {
-			let BindColon { attrs, token, if_, cond, brace, props } = *bind_colon;
-			let mut block = TokenStream::new();
+		Content::Match(match_) => {
+			let Match { attrs, token, expr, brace, arms } = *match_;
+			let pattrs = pattrs.get(fields);
 			
-			for inner in props { conditional::expand(
-				inner, &mut block, bindings, &[], assignee, None
-			) }
-			
-			let mut body = Group::new(Delimiter::Brace, block);
-			body.set_span(brace.span.join());
-			
-			bindings.spans.push(token.span());
-			bindings.stream.extend(quote![#(#pattrs)* #(#attrs)* #if_ #cond #body]);
-			settings.extend(quote![#(#pattrs)* #(#attrs)* #body]);
-		}
-		Content::Bind(bind) => {
-			let Bind { token, init, mode } = *bind;
-			bindings.spans.push(token.span());
-			
-			match mode {
-				BindMode::Braced { mut attrs, brace: _, content } => { // WARNING unused brace
-					crate::extend_attributes(&mut attrs, pattrs);
+			let body: Result<_, syn::Error> = arms.into_iter()
+				.map(|Arm { attrs, pat, guard, arrow, brace, body }| {
+					let (if_, expr) = guard.as_deref().map(|(a, b)| (a, b)).unzip();
+					let (mut objects, mut builders, mut setup, mut bindings) = Default::default();
 					
-					for inner in content { conditional::expand(
-						inner, settings, bindings, &attrs, assignee, Some(init.is_some())
-					) }
-				}
-				BindMode::Unbraced(inner) => conditional::expand(
-					inner, settings, bindings, pattrs, assignee, Some(init.is_some())
-				),
-			}
-		}
-		Content::Binding(binding) => {
-			let Binding { attrs, at, mut_, name, equal, mut expr } = *binding;
-			crate::try_bind(at, objects, bindings, &mut expr);
-			let let_ = syn::Ident::new("let", at.span);
+					for content in body { expand(
+						content, &mut objects, &mut builders, &mut setup, &mut bindings,
+						&mut None, crate::Attributes::Some(&[]), assignee, None
+					)? }
+					
+					crate::bindings_error(&mut setup, bindings.spans);
+					
+					for builder in builders.into_iter().rev() { builder.extend_into(&mut objects) }
+					objects.extend(setup);
+					
+					let mut body = Group::new(Delimiter::Brace, objects);
+					if let Some(brace) = brace { body.set_span(brace.span.join()); } // WARNING not always hygienic
+					Ok(quote![#(#attrs)* #pat #if_ #expr #arrow #body])
+				}).collect();
 			
-			settings.extend(quote![#(#pattrs)* #(#attrs)* #let_ #mut_ #name #equal #expr;])
+			let mut body = Group::new(Delimiter::Brace, body?); body.set_span(brace.span.join());
+			Ok(settings.extend(quote![#(#pattrs)* #(#attrs)* #token #expr #body]))
 		}
+		Content::Property(prop) => property::expand(
+			*prop, objects, builders, settings, bindings, fields, pattrs, assignee, builder
+		)
 	}
 }

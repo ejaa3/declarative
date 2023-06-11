@@ -7,7 +7,7 @@
 // this “example” shows some features that the macro supports
 // (not exhaustively) but have not been properly exemplified:
 
-#![allow(unused_doc_comments, unused_variables)]
+#![allow(unused_doc_comments, unused_variables, dead_code)]
 
 use declarative::{block as view, builder_mode};
 
@@ -19,9 +19,7 @@ struct Besides {
 
 impl Default for Besides {
 	fn default() -> Self {
-		Self { inner: Default::default(),
-		       fun_1: || Some(()),
-		       fun_2: |arg| arg }
+		Self { inner: Default::default(), fun_1: || Some(()), fun_2: |arg| arg }
 	}
 }
 
@@ -36,14 +34,13 @@ impl Besides {
 	fn generic_method<T: Default>(&self) -> Option<T> { Some(T::default()) }
 	fn generic_method_arg<T>(&self, arg: T) -> T { arg }
 	
-	fn append(&self, other: Option<&Besides>) { }
+	fn append<'a>(&self, other: Option<&'a Besides>) -> Option<&'a Besides> { other }
 }
 
 fn main() {
 	let fun_1 = || Some(()); // this variable will be bound to a struct field
 	
-	view! {
-		// a way to define a struct, useful for starting components with many parameters:
+	view! { // a way to define a struct, useful for starting components with many parameters:
 		Besides mut object ~{ // tilde before the brace (works similar to using `!`)
 			fun_1; // if no argument is given, it will bind to a previous variable with the same field name
 			fun_2: |arg| arg
@@ -55,14 +52,12 @@ fn main() {
 			// use = to assign fields
 			inner = None
 			
-			Besides ~{ // to assign items to fields, #interpolate with braces:
-				#inner { Some(Box::new(#)) }
+			// to assign items to fields, #interpolate with braces:
+			Besides #inner { Some(Box::new(#)) } ~{
 				fun_1: || None
 				fun_2: |arg| arg
 				
-				// here we are #interpolating into a struct field:
-				Besides #inner(Some(Box::new(#))) { }
-				// currently it is only possible to #interpolate with parentheses in builder mode
+				Besides #inner(Some(Box::new(#))) { } // we have #interpolated into a structure field
 			}
 			
 			// to assign items to functional fields, interpolate with brackets:
@@ -81,46 +76,51 @@ fn main() {
 			generic_method_arg::<Option<()>>: Some(()) 'back !{ ~~unwrap; } // below is the same
 			generic_method_arg: Some(()) 'back !{ ~~unwrap; } // the generic was inferred
 		}
+	}
+	
+	view! { // external attributes apply internally (doc comments are attributes):
+		/// some struct
+		struct Struct<'a> { } // struct fields inherit attributes from items
 		
-		// external attributes apply internally (doc comments are attributes):
 		/// outer object
-		Besides outer {
+		Besides outer: {
 			/// outer property
 			append: None
 			
+			/// outer extension
+			@Besides::method(&#)
+			
 			/// inner object
-			Besides inner #append(Some(&#)) {
+			Besides inner: #append(Some(&#)) {
 				/// inner property
-				append: None
+				append: Some(&outer) 'back deep: Option<&'a Besides> { }
+				// we have generated another struct field with the above `'back`
 				
 				/// inner ref
 				ref outer.inner #append(#.as_deref()) { }
 				
-				/// inner extension 1
-				@Besides::method(&#)
-				
-				/// inner extension 2
+				/// inner extension
 				@Besides::generic_method_arg::<Option<()>>(&#, Some(()))
 				
 				/// bind colon
 				'bind: if "this".is_empty() {
-					append: None
+					append: None 'back { }
 					
 					/// bind colon property
 					append: None
 				}
 				
-				/// bind outer if
+				/// bind at outer if
 				'bind @if "this".is_empty() {
 					append: None
 					
-					/// bind inner if
+					/// bind at inner if
 					if false { append: None } else {
-						/// bind inner if prop
+						/// bind at inner if property
 						append: None
 					}
 				} else if true { append: None } else {
-					/// bind outer if prop
+					/// bind at outer if property
 					append: None
 				}
 			}
@@ -130,10 +130,14 @@ fn main() {
 			
 			/// outer if
 			if "this".is_empty() { // conditional initialization (you can also `match`)
-				append: None // currently no reactivity possible on conditional initialization
+				append: None
+				
+				/// outer if bind at
+				'bind @append: None // bindings created in an `if` or `match`...
+				// scope can only be consumed there, not even in an inner scope
 				
 				/// outer if property
-				append: None
+				append: @{ bindings!(); None }
 				
 				/// inner match
 				match true {

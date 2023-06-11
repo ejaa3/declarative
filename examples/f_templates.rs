@@ -11,34 +11,17 @@ enum Msg { Increase, Decrease, Reset } // channels again
 
 macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send($msg).unwrap()] }
 
-// the second (not the first) thing to do is this structure:
-struct BoxTemplate {
-	 root: gtk::Box, // the main widget
-	label: gtk::Label, // the rest are widgets that you want to “publish” or “export”
-	reset: gtk::Button, // this widget will not be contained in the main one
-}
-
-// to edit any widget in the scope of this item:
-impl std::ops::Deref for BoxTemplate {
-	type Target = gtk::Box;
-	
-	fn deref(&self) -> &Self::Target {
-		&self.root // in this case the root widget
-	}
-}
-
 #[view]
-// if `Default` were implemented, there would be no need
-// to write `::new()` but there would be no parameters:
-impl BoxTemplate {
-	// could also be unassociated function:
-	fn new(nth: &str, tx: &glib::Sender<Msg>) -> Self {
-		expand_view_here! { }
-		Self { root, label, reset }
-	}
-	
-	view! { // now yes, the first thing to do is a view
-		gtk::Box root !{ // it is convenient to name the widgets the same as the fields
+impl BoxTemplate { // we are implementing a struct generated semi-automatically by the view
+	view! { // specifically this is the struct:
+		struct BoxTemplate { } // it is also possible to change the visibility or add more fields if needed
+		// each struct must be followed by an item (we will generate its fields from the items as follows)
+		
+		// to “export” this widget in the template, you must give it a name followed by a colon:
+		gtk::Box root: !{ // the type is assumed to be `gtk::Box`, but an incorrect assumption is possible
+			// in such case the correct type should be specified after the colon (only type paths are supported)
+			// it is also possible to change the visibility with `pub` before the `mut` or the name
+			
 			orientation: gtk::Orientation::Vertical
 			spacing: 6
 			margin_top: 6
@@ -46,26 +29,45 @@ impl BoxTemplate {
 			margin_start: 6
 			~margin_end: 6
 			
-			gtk::Label label #append(&#) !{ // we will publish this widget and so we name it
+			gtk::Label label: #append(&#) !{ // we also export this widget, so it has a name followed by a colon
 				label: glib::gformat!("This is the {nth} view")
 			}
 			
-			gtk::Button::with_label("Increase") #append(&#) { // this is private (not even named)
+			gtk::Button::with_label("Increase") #append(&#) { // we do not export this (not even named)
 				connect_clicked: clone![tx; move |_| send!(Msg::Increase => tx)]
 			}
 		}
 		// we will also export this widget although it is independent of the root:
-		gtk::Button reset !{ // we must do something with it in the main view so that it is not lost
+		gtk::Button reset: !{ // we must do something with it in the main view so that it is not lost
 			~label: glib::gformat!("Reset {nth}")
 			connect_clicked: clone![tx; move |_| send!(Msg::Reset => tx)]
 		}
 	}
-} // now let's use the template:
+	
+	// if `Default` were implemented, there would be no need to write `::new()` but there
+	// would be no parameters (we could also have defined an unassociated function):
+	fn new(nth: &str, tx: &glib::Sender<Msg>) -> Self {
+		expand_view_here! { }
+		Self { root, label, reset }
+	}
+}
+
+// if we had used `#[view]` for a `mod`, the struct would be created inside it
+//
+// for the rest (`impl`, `trait`, `fn`, etc.) it is created in the same scope (here for the above case)
+
+impl std::ops::Deref for BoxTemplate { // views get along with `Deref`
+	type Target = gtk::Box;
+	
+	fn deref(&self) -> &Self::Target {
+		&self.root // let's try `Deref` with the root widget
+	}
+}
 
 #[view]
-mod example {
+mod example { // now let's use the template:
 	use super::*;
-
+	
 	// let's create two states and two channels for two templates:
 	pub fn start(app: &gtk::Application) {
 		let (tx_1, rx_1) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);

@@ -49,7 +49,8 @@ impl Child<(), ()> { // now we don't have to specify P and R in `Child::<P, R>::
 			
 			gtk::Label #append(&#) !{
 				label: &format!("This is the {nth} child")
-				'bind set_label: &format!("The {nth} count is: {count}")
+				'bind set_label: &format!("The {nth} count is: {count}") // we just used `nth` in this binding
+				// this means that the binding closure got a reference to it
 			}
 			
 			gtk::Button::with_label("Increase") #append(&#) {

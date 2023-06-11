@@ -8,17 +8,20 @@
 
 //! A proc-macro library for creating complex reactive views declaratively and quickly.
 
-mod conditional;
 mod content;
 mod item;
 mod property;
 mod view;
 
-use std::cell::RefCell;
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
-use quote::{TokenStreamExt, ToTokens, quote};
+use quote::{TokenStreamExt, ToTokens, quote_spanned};
 use syn::{punctuated::Punctuated, visit_mut::VisitMut};
+
+macro_rules! unwrap (($expr:expr) => (match $expr {
+	Ok(value) => value,
+	Err(error) => return TokenStream::from(error.into_compile_error())
+}));
 
 #[proc_macro]
 /// To fully understand this macro, please read the examples
@@ -38,8 +41,13 @@ use syn::{punctuated::Punctuated, visit_mut::VisitMut};
 /// }
 /// ~~~
 pub fn block(stream: TokenStream) -> TokenStream {
-	let (mut stream, bindings) = view::expand(syn::parse_macro_input!(stream));
-	view::bindings_error(&mut stream, bindings.spans);
+	let mut items = vec![];
+	let (mut stream, bindings) = unwrap! {
+		view::expand(&mut items, syn::parse_macro_input!(stream))
+	};
+	
+	bindings_error(&mut stream, bindings.spans);
+	for item in items { item.to_tokens(&mut stream) }
 	TokenStream::from(stream)
 }
 
@@ -80,19 +88,44 @@ pub fn block(stream: TokenStream) -> TokenStream {
 /// }
 /// ~~~
 pub fn view(stream: TokenStream, code: TokenStream) -> TokenStream {
-	let file = &mut syn::parse_macro_input!(code);
+	let item = &mut syn::parse_macro_input!(code);
 	let mut output = TokenStream2::new();
 	
-	if stream.is_empty() {
-		let mut visitor = view::Visitor { deque: Default::default() };
-		visitor.visit_file_mut(file);
-		
-		if visitor.deque.is_empty() { panic!("there must be at least one `view!`") }
-		
-		while let Some(view) = visitor.deque.pop_front() { view::parse(file, &mut output, view) }
-	} else { view::parse(file, &mut output, view::expand(syn::parse_macro_input!(stream))) }
+	let fill = |item: &mut _, output: &mut _, structs: &mut Vec<_>| {
+		if let syn::Item::Mod(mod_) = item {
+			if let Some((_, items)) = &mut mod_.content {
+				items.reserve(structs.len());
+				while let Some(item) = structs.pop() {
+					items.push(syn::Item::Struct(item))
+				} return
+			}
+		}
+		while let Some(item) = structs.pop() { item.to_tokens(output) }
+	};
 	
-	file.to_tokens(&mut output);
+	if stream.is_empty() {
+		let mut visitor = view::Visitor::Ok { items: vec![], deque: Default::default() };
+		visitor.visit_item_mut(item);
+		
+		match visitor {
+			view::Visitor::Ok { mut items, mut deque } => {
+				if deque.is_empty() { panic!("there must be at least one `view!`") }
+				
+				while let Some((stream, bindings)) = deque.pop_front() {
+					unwrap!(view::parse(item, &mut output, stream, bindings));
+					fill(item, &mut output, &mut items)
+				}
+			}
+			view::Visitor::Error(error) => return TokenStream::from(error.into_compile_error())
+		}
+	} else {
+		let mut structs = vec![];
+		let (stream, bindings) = unwrap!(view::expand(&mut structs, syn::parse_macro_input!(stream)));
+		unwrap!(view::parse(item, &mut output, stream, bindings));
+		fill(item, &mut output, &mut structs)
+	}
+	
+	item.to_tokens(&mut output);
 	TokenStream::from(output)
 }
 
@@ -103,12 +136,15 @@ enum Assignee<'a> {
 	None,
 }
 
+#[derive(Copy, Clone)]
+enum Attributes<T: AsRef<[syn::Attribute]>> { Some(T), None(usize) }
+
 #[derive(Default)]
 struct Bindings { spans: Vec<Span>, stream: TokenStream2 }
 
 enum Builder {
 	#[cfg(not(feature = "builder-mode"))]
-	Builder(TokenStream2),
+	Builder(TokenStream2, Span),
 	
 	#[cfg(feature = "builder-mode")]
 	Builder {
@@ -117,27 +153,35 @@ enum Builder {
 		 span: Span,
 		tilde: Option<syn::Token![~]>,
 	},
-	
 	#[cfg(not(feature = "builder-mode"))]
-	Struct { ty: TokenStream2, fields: RefCell<TokenStream2>, call: Option<TokenStream2> },
-	
+	Struct {
+		    ty: TokenStream2,
+		fields: TokenStream2,
+		  call: Option<TokenStream2>,
+		  span: Span,
+	},
 	#[cfg(feature = "builder-mode")]
 	Struct {
 		  left: TokenStream2,
 		    ty: TokenStream2,
-		fields: RefCell<TokenStream2>,
+		fields: TokenStream2,
 		  span: Span,
 		 tilde: Option<syn::Token![~]>,
 	},
 }
 
+struct Field {
+	  vis: syn::Visibility,
+	 mut_: Option<syn::Token![mut]>,
+	 name: syn::Ident,
+	colon: Option<syn::Token![:]>,
+	   ty: Option<Box<syn::TypePath>>,
+}
+
 enum Mode { Field(Span), Method(Span), FnField(Span) }
 
-trait ParseReactive: Sized {
-	fn parse(input: syn::parse::ParseStream,
-	         attrs: Option<Vec<syn::Attribute>>,
-	      reactive: bool,
-	) -> syn::Result<Self>;
+trait Attributed: Sized {
+	fn parse(input: syn::parse::ParseStream, attrs: Option<Vec<syn::Attribute>>) -> syn::Result<Self>;
 }
 
 enum Path {
@@ -149,7 +193,12 @@ enum Path {
 
 struct Visitor { placeholder: &'static str, stream: Option<TokenStream2> }
 
+fn bindings_error(stream: &mut TokenStream2, spans: Vec<Span>) {
+	for span in spans { stream.extend(syn::Error::new(span, ERROR).to_compile_error()) }
+}
+
 fn count() -> compact_str::CompactString {
+	use std::cell::RefCell;
 	thread_local![static COUNT: RefCell<usize> = RefCell::new(0)];
 	
 	COUNT.with(|cell| {
@@ -170,12 +219,11 @@ fn find_pound(rest: &mut syn::buffer::Cursor, outer: &mut TokenStream2, assignee
 	while let Some((token_tree, next)) = rest.token_tree() {
 		match token_tree {
 			TokenTree::Group(group) => {
-				let delimiter = group.delimiter();
-				let (mut into, _, next) = rest.group(delimiter).unwrap();
+				let (mut into, _, next) = rest.group(group.delimiter()).unwrap();
 				let mut inner = TokenStream2::new();
 				let found = find_pound(&mut into, &mut inner, assignee);
 				
-				let mut copy = proc_macro2::Group::new(delimiter, inner);
+				let mut copy = proc_macro2::Group::new(group.delimiter(), inner);
 				copy.set_span(group.span());
 				outer.append(copy);
 				
@@ -184,8 +232,9 @@ fn find_pound(rest: &mut syn::buffer::Cursor, outer: &mut TokenStream2, assignee
 			}
 			
 			TokenTree::Punct(punct) => if punct.as_char() == '#' {
-				if let Some((punct, next)) = next.punct() {
-					if punct.as_char() == '#' {
+				if let Some((mut inner, next)) = next.punct() {
+					if inner.as_char() == '#' {
+						inner.set_span(punct.span());
 						outer.append(punct);
 						*rest = next;
 						continue
@@ -193,35 +242,28 @@ fn find_pound(rest: &mut syn::buffer::Cursor, outer: &mut TokenStream2, assignee
 				}
 				
 				let assignee = assignee.spanned_to(punct.span());
-				outer.extend(quote![#(#assignee).*]);
+				outer.extend(quote_spanned![punct.span() => #(#assignee).*]);
 				outer.extend(next.token_stream());
 				return true
-			} else { outer.append(punct); *rest = next; }
+			} else { outer.append(punct); *rest = next }
 			
-			token_tree => { outer.append(token_tree); *rest = next; }
+			token_tree => { outer.append(token_tree); *rest = next }
 		}
 	}
 	false
 }
 
-fn try_bind(at: syn::Token![@],
-       objects: &mut TokenStream2,
-      bindings: &mut Bindings,
-          expr: &mut syn::Expr,
-) {
+fn try_bind(at: syn::Token![@], bindings: &mut Bindings, expr: &mut syn::Expr) -> syn::Result<()> {
 	if std::mem::take(&mut bindings.spans).is_empty() {
-		return objects.extend(syn::Error::new(
-			at.span, "there are no bindings to consume"
-		).to_compile_error())
+		Err(syn::Error::new(at.span, "there are no bindings to consume or \
+			you are trying from an inner binding or conditional scope"))?
 	}
 	
 	let stream = Some(std::mem::take(&mut bindings.stream));
 	let mut visitor = Visitor { placeholder: "bindings", stream };
 	visitor.visit_expr_mut(expr);
 	
-	if visitor.stream.is_some() {
-		objects.extend(syn::Error::new_spanned(expr, ERROR).to_compile_error())
-	}
+	if visitor.stream.is_some() { Err(syn::Error::new_spanned(expr, ERROR)) } else { Ok(()) }
 }
 
 fn parse_unterminated<T, P>(input: syn::parse::ParseStream) -> syn::Result<Punctuated<T, P>>
@@ -231,21 +273,21 @@ where T: syn::parse::Parse, P: syn::parse::Parse {
 	
 	while let Ok(punct) = input.parse() {
 		punctuated.push_punct(punct);
-		punctuated.push_value(input.parse()?);
+		punctuated.push_value(input.parse()?)
 	}
 	Ok(punctuated)
 }
 
-fn parse_vec<T: ParseReactive>(
-	input: syn::parse::ParseStream, reactive: bool
-) -> syn::Result<(syn::token::Brace, Vec<T>)> {
+fn parse_vec<T: Attributed>(input: syn::parse::ParseStream) -> syn::Result<(syn::token::Brace, Vec<T>)> {
 	let braces;
 	let (brace, mut props) = (syn::braced!(braces in input), vec![]);
 	
 	while !braces.is_empty() {
-		props.push(T::parse(&braces, Some(braces.call(syn::Attribute::parse_outer)?), reactive)?)
-	}
-	Ok((brace, props))
+		props.push(T::parse(&braces, Some(braces.call(syn::Attribute::parse_outer)?))?)
+	} Ok((brace, props))
 }
 
-const ERROR: &str = "bindings must be consumed with the `bindings!` placeholder macro";
+const    ERROR: &str = "bindings must be consumed with the `bindings!` placeholder macro";
+const  NO_TYPE: &str = "a type must be specified after the colon";
+const NO_FIELD: &str = "a colon cannot be used if a struct has not been \
+	declared before the root item or within a binding or conditional scope";
