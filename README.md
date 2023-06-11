@@ -16,7 +16,7 @@ To use it, add to your Cargo.toml:
 
 ~~~ toml
 [dependencies.declarative]
-version = '0.5.1'
+version = '0.5.2'
 
 # for a custom builder mode:
 features = ['builder-mode']
@@ -39,11 +39,11 @@ https://gtk-rs.org/gtk4-rs/stable/latest/book/
 You may need to tell rust-analyzer that the examples depend on the `gtk-rs` feature to avoid false positives.
 For example, with VS Code it is configured with the following JSON:
 
-In addition to macro features, the examples also show some usage patterns (templates, components, Elm, etc.). GTK has a pattern of its own due to its object orientation and `declarative` integrates well, but there is no example about it (it would be verbose and exclusive to GTK, while `declarative` is not GTK based).
-
 ~~~ JSON
 { "rust-analyzer.cargo.features": ["gtk-rs"] }
 ~~~
+
+In addition to macro features, the examples also show some usage patterns (templates, components, Elm, etc.). GTK has a pattern of its own due to its object orientation and `declarative` integrates well, but there is no example about it (it would be verbose and exclusive to GTK, while `declarative` is not GTK based).
 
 ## Counter application example
 

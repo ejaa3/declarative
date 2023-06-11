@@ -131,9 +131,9 @@ pub fn view(stream: TokenStream, code: TokenStream) -> TokenStream {
 
 #[derive(Copy, Clone)]
 enum Assignee<'a> {
-	Field (&'a Punctuated<syn::Ident, syn::Token![.]>),
-	Ident (&'a syn::Ident),
-	None,
+	Field (Option<&'a Assignee<'a>>, &'a Punctuated<syn::Ident, syn::Token![.]>),
+	Ident (Option<&'a Assignee<'a>>, &'a syn::Ident),
+	 None,
 }
 
 #[derive(Copy, Clone)]
@@ -179,10 +179,6 @@ struct Field {
 }
 
 enum Mode { Field(Span), Method(Span), FnField(Span) }
-
-trait Attributed: Sized {
-	fn parse(input: syn::parse::ParseStream, attrs: Option<Vec<syn::Attribute>>) -> syn::Result<Self>;
-}
 
 enum Path {
 	Type(syn::TypePath), Field {
@@ -276,15 +272,6 @@ where T: syn::parse::Parse, P: syn::parse::Parse {
 		punctuated.push_value(input.parse()?)
 	}
 	Ok(punctuated)
-}
-
-fn parse_vec<T: Attributed>(input: syn::parse::ParseStream) -> syn::Result<(syn::token::Brace, Vec<T>)> {
-	let braces;
-	let (brace, mut props) = (syn::braced!(braces in input), vec![]);
-	
-	while !braces.is_empty() {
-		props.push(T::parse(&braces, Some(braces.call(syn::Attribute::parse_outer)?))?)
-	} Ok((brace, props))
 }
 
 const    ERROR: &str = "bindings must be consumed with the `bindings!` placeholder macro";

@@ -7,7 +7,7 @@
 use proc_macro2::{Delimiter, Group, Punct, Spacing, Span, TokenStream};
 use quote::TokenStreamExt;
 use syn::{punctuated::Punctuated, visit_mut::VisitMut};
-use crate::{item, Assignee, Attributes, Bindings, Path};
+use crate::{item, Assignee, Attributes, Bindings};
 
 pub enum Root { Struct(syn::ItemStruct), Item(item::Item) }
 
@@ -28,7 +28,9 @@ impl syn::parse::Parse for Roots {
 				)? };
 				
 				item.attrs = attrs; props.push(Root::Struct(item))
-			} else { props.push(Root::Item(item::parse(input, attrs, true)?)) }
+			} else if input.parse::<syn::Token![ref]>().is_ok() {
+				props.push(Root::Item(item::parse(input, attrs, None, true)?))
+			} else { props.push(Root::Item(item::parse(input, attrs, Some(input.parse()?), true)?)) }
 		}
 		
 		Ok(Self(props))
@@ -42,18 +44,17 @@ pub(crate) fn expand(
 	let (mut final_struct, mut item_struct) = (false, None);
 	
 	macro_rules! check_struct {
-		($($set:literal)?) => {
-			if let Some(item) = item_struct.take() {
-				if final_struct { return Err(
-					syn::Error::new_spanned(item, "structs must be followed by items")
-				) }
-				$(final_struct = $set;)? items.push(item)
-			}
+		($($item:ident)?) => {
+			if final_struct { return Err(
+				syn::Error::new_spanned(item_struct, "structs must be followed by items")
+			) }
+			if let Some(item) = item_struct.take() { items.push(item) }
+			$(item_struct = Some($item); final_struct = true)?
 		}
 	}
 	
 	for root in roots { match root {
-		Root::Struct (item) => { check_struct!(true); item_struct = Some(item) }
+		Root::Struct (item) => { check_struct!(item); }
 		Root::Item   (item) => {
 			final_struct = false;
 			
@@ -64,7 +65,7 @@ pub(crate) fn expand(
 			
 			item::expand(
 				item, &mut objects, &mut builders, &mut settings, &mut bindings,
-				fields, crate::Attributes::Some(&[]), Assignee::None, None
+				fields, Attributes::Some(&[]), Assignee::None, None
 			)?;
 		}
 	} }
@@ -132,22 +133,35 @@ pub(crate) fn parse(
 }
 
 impl<'a> crate::Assignee<'a> {
-	pub fn spanned_to(&'a self, span: Span) -> Box<dyn Iterator<Item = syn::Ident> + 'a> {
+	pub fn spanned_to(&'a self, span: Span) -> impl Iterator<Item = syn::Ident> + 'a {
+		self.iter().cloned().map(move |mut ident| { ident.set_span(span); ident })
+	}
+	
+	fn iter(&'a self) -> Box<dyn Iterator<Item = &'a syn::Ident> + 'a> {
 		match self {
-			Self::Field(field) => Box::new(field.iter().map(move |ident| {
-				let mut ident = ident.clone();
-				ident.set_span(span);
-				ident
-			})),
+			Self::Field(assignee, field) => Box::new(assignee.iter()
+				.flat_map(|assignee| assignee.iter()).chain(field.iter())),
 			
-			Self::Ident(ident) => Box::new(std::iter::once({
-				let mut ident = (*ident).clone();
-				ident.set_span(span);
-				ident
-			})),
+			Self::Ident(assignee, ident) => Box::new(assignee.iter()
+				.flat_map(|assignee| assignee.iter()).chain(std::iter::once(*ident))),
 			
 			Self::None => unreachable!(),
 		}
+	}
+}
+
+impl quote::ToTokens for crate::Assignee<'_> {
+	fn to_tokens(&self, tokens: &mut TokenStream) {
+		let (assignee, chain): (_, &dyn quote::ToTokens) = match self {
+			Self::Field(assignee, field) => (assignee, field),
+			Self::Ident(assignee, ident) => (assignee, ident),
+			Self::None => unreachable!(),
+		};
+		if let Some(assignee) = assignee {
+			assignee.to_tokens(tokens);
+			tokens.append(Punct::new('.', Spacing::Alone))
+		}
+		chain.to_tokens(tokens)
 	}
 }
 
@@ -162,16 +176,6 @@ impl<T: AsRef<[syn::Attribute]>> Attributes<T> {
 		match self {
 			Self::Some(value) => Attributes::Some(value.as_ref()),
 			Self::None(index) => Attributes::None(*index),
-		}
-	}
-}
-
-impl quote::ToTokens for crate::Assignee<'_> {
-	fn to_tokens(&self, tokens: &mut TokenStream) {
-		match self {
-			Self::Field(field) => field.to_tokens(tokens),
-			Self::Ident(ident) => ident.to_tokens(tokens),
-			Self::None => unreachable!(),
 		}
 	}
 }
@@ -244,27 +248,27 @@ impl crate::Path {
 	
 	pub fn span(&self) -> Span {
 		match self {
-			Path::Type(ty) => ty.path.segments.last().map(|seg| seg.ident.span()),
-			Path::Field { access, .. } => access.last().map(syn::Ident::span),
+			Self::Type(ty) => ty.path.segments.last().map(|seg| seg.ident.span()),
+			Self::Field { access, .. } => access.last().map(syn::Ident::span),
 		}.unwrap_or(Span::call_site())
 	}
 }
 
-impl syn::parse::Parse for Path {
+impl syn::parse::Parse for crate::Path {
 	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
 		if input.peek(syn::Ident) && input.peek2(syn::Token![.]) {
 			let access = crate::parse_unterminated(input)?;
 			let gens = syn::AngleBracketedGenericArguments::parse_turbofish(input).ok();
-			Ok(Path::Field { access, gens })
-		} else { Ok(Path::Type(input.parse()?)) }
+			Ok(Self::Field { access, gens })
+		} else { Ok(Self::Type(input.parse()?)) }
 	}
 }
 
-impl quote::ToTokens for Path {
+impl quote::ToTokens for crate::Path {
 	fn to_tokens(&self, tokens: &mut TokenStream) {
 		match self {
-			Path::Type(path) => path.to_tokens(tokens),
-			Path::Field { access, gens } => {
+			Self::Type(path) => path.to_tokens(tokens),
+			Self::Field { access, gens } => {
 				access.to_tokens(tokens);
 				gens.to_tokens(tokens);
 			}

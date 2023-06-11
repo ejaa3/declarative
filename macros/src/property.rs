@@ -11,7 +11,7 @@ use crate::{content, Assignee, Attributes, Builder, Mode};
 
 pub struct Property {
 	 attrs: Vec<syn::Attribute>,
-	  prop: crate::Path,
+	  path: crate::Path,
 	by_ref: Option<syn::Token![&]>,
 	  mut_: Option<syn::Token![mut]>,
 	  mode: Mode,
@@ -33,39 +33,36 @@ impl quote::ToTokens for Expr {
 	}
 }
 
-impl crate::Attributed for Box<Property> {
-	fn parse(input: syn::parse::ParseStream, attrs: Option<Vec<syn::Attribute>>) -> syn::Result<Self> {
-		let attrs = attrs.unwrap_or_default();
-		let prop: crate::Path = input.parse()?;
-		
-		let callable = || {
-			let args = crate::parse_unterminated(input)?;
-			let    _ = input.parse::<syn::Token![;]>();
-			let back = parse_back(input)?;
-			Ok::<_, syn::Error>((args, back))
-		};
-		
-		let (by_ref, mut_) = if prop.is_long() {
-			(input.parse()?, input.parse()?)
-		} else { (None, None) };
-		
-		syn::custom_punctuation!(ColonEq, :=);
-		syn::custom_punctuation!(SemiSemi, ;;);
-		
-		let (mode, (args, back)) = if let Ok(eq) = input.parse::<syn::Token![=]>() {
-			(Mode::Field(eq.span), (Punctuated::from_iter([input.parse::<Expr>()?]), None))
-		} else if let Ok(colon_eq) = input.parse::<ColonEq>() {
-			(Mode::FnField(colon_eq.spans[1]), callable()?)
-		} else if let Ok(colon) = input.parse::<syn::Token![:]>() {
-			(Mode::Method(colon.span), callable()?)
-		} else if let Ok(semis) = input.parse::<SemiSemi>() {
-			(Mode::FnField(semis.spans[1]), (Punctuated::new(), parse_back(input)?))
-		} else if let Ok(semi) = input.parse::<syn::Token![;]>() {
-			(Mode::Method(semi.span), (Punctuated::new(), parse_back(input)?))
-		} else { Err(input.error("expected `=>`, `=`, `:`, `:=`, `;` or `;;`"))? };
-		
-		Ok(Box::new(Property { attrs, prop, by_ref, mut_, mode, args, back }))
-	}
+pub(crate) fn parse(
+	input: syn::parse::ParseStream, attrs: Vec<syn::Attribute>, path: crate::Path
+) -> syn::Result<Box<Property>> {
+	let callable = || {
+		let args = crate::parse_unterminated(input)?;
+		let    _ = input.parse::<syn::Token![;]>();
+		let back = parse_back(input)?;
+		Ok::<_, syn::Error>((args, back))
+	};
+	
+	let (by_ref, mut_) = if path.is_long() {
+		(input.parse()?, input.parse()?)
+	} else { (None, None) };
+	
+	syn::custom_punctuation!(ColonEq, :=);
+	syn::custom_punctuation!(SemiSemi, ;;);
+	
+	let (mode, (args, back)) = if let Ok(eq) = input.parse::<syn::Token![=]>() {
+		(Mode::Field(eq.span), (Punctuated::from_iter([input.parse::<Expr>()?]), None))
+	} else if let Ok(colon_eq) = input.parse::<ColonEq>() {
+		(Mode::FnField(colon_eq.spans[1]), callable()?)
+	} else if let Ok(colon) = input.parse::<syn::Token![:]>() {
+		(Mode::Method(colon.span), callable()?)
+	} else if let Ok(semis) = input.parse::<SemiSemi>() {
+		(Mode::FnField(semis.spans[1]), (Punctuated::new(), parse_back(input)?))
+	} else if let Ok(semi) = input.parse::<syn::Token![;]>() {
+		(Mode::Method(semi.span), (Punctuated::new(), parse_back(input)?))
+	} else { Err(input.error("expected `=>`, `=`, `:`, `:=`, `;` or `;;`"))? };
+	
+	Ok(Box::new(Property { attrs, path, by_ref, mut_, mode, args, back }))
 }
 
 pub struct Back {
@@ -84,7 +81,7 @@ pub fn parse_back(input: syn::parse::ParseStream) -> syn::Result<Option<Box<Back
 	let (field, build) = (input.parse()?, input.parse()?);
 	let braces; syn::braced!(braces in input);
 	let mut body = vec![];
-	while !braces.is_empty() { body.push(crate::Attributed::parse(&braces, None)?) }
+	while !braces.is_empty() { body.push(braces.parse()?) }
 	Ok(Some(Box::new(Back { token, field, build, body })))
 }
 
@@ -117,7 +114,7 @@ pub(crate) fn expand_back(
 	
 	for content in body { content::expand(
 		content, objects, builders, &mut setup, bindings,
-		fields, attrs.as_slice(), Assignee::Ident(&name), index
+		fields, attrs.as_slice(), Assignee::Ident(None, &name), index
 	)? }
 	
 	if let Some(colon) = colon {
@@ -185,7 +182,7 @@ pub(crate) fn check(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn expand(
-	Property { mut attrs, prop, by_ref, mut_, mode, mut args, back }: Property,
+	Property { mut attrs, path, by_ref, mut_, mode, mut args, back }: Property,
 	 objects: &mut TokenStream,
 	builders: &mut Vec<Builder>,
 	settings: &mut TokenStream,
@@ -201,7 +198,7 @@ pub(crate) fn expand(
 				return Err(syn::Error::new_spanned(args, "cannot give multiple arguments"))
 			}
 			let args = { try_bind(&mut args, bindings)?; args.iter() };
-			$fields.extend(quote_spanned![*$span => #prop #(: #args)*,]);
+			$fields.extend(quote_spanned![*$span => #path #(: #args)*,]);
 			return Ok(())
 		}
 	}
@@ -209,30 +206,30 @@ pub(crate) fn expand(
 	match builder.map(|index| &mut builders[index]) {
 		#[cfg(not(feature = "builder-mode"))]
 		Some(Builder::Builder(stream, span)) => {
-			check(Some(&attrs), &prop, mode, false, back)?;
+			check(Some(&attrs), &path, mode, false, back)?;
 			try_bind(&mut args, bindings)?;
-			stream.extend(quote_spanned![*span => .#prop(#args)]);
+			stream.extend(quote_spanned![*span => .#path(#args)]);
 			return Ok(())
 		}
 		#[cfg(feature = "builder-mode")]
 		Some(Builder::Builder { right, span, .. }) => {
-			check(Some(&attrs), &prop, mode, false, back)?;
+			check(Some(&attrs), &path, mode, false, back)?;
 			try_bind(&mut args, bindings)?;
-			right.extend(quote_spanned![*span => .#prop(#args)]);
+			right.extend(quote_spanned![*span => .#path(#args)]);
 			return Ok(())
 		}
 		#[cfg(not(feature = "builder-mode"))]
 		Some(Builder::Struct { ty: _, fields, call, span }) => {
-			check(call.is_some().then_some(&attrs), &prop, mode, false, back)?;
+			check(call.is_some().then_some(&attrs), &path, mode, false, back)?;
 			
 			let Some(call) = call else { set_field!(fields, span); };
 			try_bind(&mut args, bindings)?;
-			call.extend(quote_spanned![*span => .#prop(#args)]);
+			call.extend(quote_spanned![*span => .#path(#args)]);
 			return Ok(())
 		}
 		#[cfg(feature = "builder-mode")]
 		Some(Builder::Struct { fields, span, .. }) => {
-			check(None, &prop, mode, false, back)?;
+			check(None, &path, mode, false, back)?;
 			set_field!(fields, span);
 		}
 		None => ()
@@ -244,31 +241,31 @@ pub(crate) fn expand(
 		Mode::Field(span) => {
 			let assignee = assignee.spanned_to(span);
 			try_bind(&mut args, bindings)?;
-			settings.extend(quote_spanned![span => #(#pattrs)* #(#attrs)* #(#assignee.)* #prop = #args;]);
+			settings.extend(quote_spanned![span => #(#pattrs)* #(#attrs)* #(#assignee.)* #path = #args;]);
 			return Ok(())
 		}
 		Mode::Method(span) => {
 			let assignee = assignee.spanned_to(span);
 			
-			if prop.is_long() {
+			if path.is_long() {
 				try_bind(&mut args, bindings)?;
-				(quote_spanned![span => #prop(#by_ref #mut_ #(#assignee).*, #args)], back)
+				(quote_spanned![span => #path(#by_ref #mut_ #(#assignee).*, #args)], back)
 			} else {
 				try_bind(&mut args, bindings)?;
 				let mut args = Group::new(Delimiter::Parenthesis, quote![#args]);
-				args.set_span(prop.span());
+				args.set_span(path.span());
 				
-				(quote_spanned![span => #(#assignee.)* #prop #args], back)
+				(quote_spanned![span => #(#assignee.)* #path #args], back)
 			}
 		}
 		Mode::FnField(span) => {
 			let assignee = assignee.spanned_to(span);
-			let field = quote_spanned![span => #(#assignee.)* #prop];
+			let field = quote_spanned![span => #(#assignee.)* #path];
 			let mut field = Group::new(Delimiter::Parenthesis, field);
-			field.set_span(prop.span());
+			field.set_span(path.span());
 			
 			try_bind(&mut args, bindings)?;
-			(quote_spanned![prop.span() => #field (#args)], back)
+			(quote_spanned![path.span() => #field (#args)], back)
 		}
 	};
 	
@@ -287,10 +284,13 @@ pub struct Edit {
 	 body: Vec<content::Content>,
 }
 
-pub fn parse_edit(input: syn::parse::ParseStream, attrs: Vec<syn::Attribute>) -> syn::Result<Box<Edit>> {
-	let edit = crate::parse_unterminated(input)?;
+pub fn parse_edit(
+	input: syn::parse::ParseStream,
+	attrs: Vec<syn::Attribute>,
+	 edit: Punctuated<syn::Ident, syn::Token![.]>,
+) -> syn::Result<Box<Edit>> {
 	let arrow = input.parse()?;
-	let (_, body) = crate::parse_vec(input)?;
+	let (_, body) = content::parse_vec(input)?;
 	Ok(Box::new(Edit { attrs, edit, arrow, body }))
 }
 
@@ -306,19 +306,7 @@ pub(crate) fn expand_edit(
 	assignee: Assignee,
 ) -> syn::Result<()> {
 	crate::extend_attributes(&mut attrs, pattrs.get(fields));
-	let punctuated;
-	
-	let assignee = match assignee {
-		Assignee::Field(field) => {
-			punctuated = Punctuated::from_iter(field.iter().cloned().chain(edit.into_iter()));
-			Assignee::Field(&punctuated)
-		}
-		Assignee::Ident(ident) => {
-			punctuated = Punctuated::from_iter(std::iter::once(ident.clone()).chain(edit.into_iter()));
-			Assignee::Field(&punctuated)
-		}
-		Assignee::None => Assignee::Field(&edit)
-	};
+	let assignee = Assignee::Field(Some(&assignee), &edit);
 	
 	let let_ = syn::Ident::new("let", arrow.spans[1]);
 	let mut eq = Punct::new('=', Spacing::Alone); eq.set_span(arrow.spans[0]);

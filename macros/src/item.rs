@@ -20,16 +20,21 @@ pub struct Item {
 
 pub enum ItemMode { Builder(syn::Token![!]), Struct(syn::Token![~]), Normal }
 
-pub fn parse(input: syn::parse::ParseStream, attrs: Vec<syn::Attribute>, root: bool) -> syn::Result<Item> {
+pub(crate) fn parse(
+	input: syn::parse::ParseStream,
+	attrs: Vec<syn::Attribute>,
+	 path: Option<crate::Path>,
+	 root: bool,
+) -> syn::Result<Item> {
 	let mut spans = [input.span(), Span::call_site(), Span::call_site()];
-	let object = parse_object(input)?;
+	let object = parse_object(input, path)?;
 	
 	let (tildable, assignee) = match &object {
 		Object::Path(path) => (match path.path {
 			crate::Path::Type(_) => path.group.is_none(), _ => false
-		}, Assignee::Ident(&path.field.name)),
+		}, Assignee::Ident(None, &path.field.name)),
 		
-		Object::Ref(ref_) => (false, Assignee::Field(ref_))
+		Object::Ref(ref_) => (false, Assignee::Field(None, ref_))
 	};
 	
 	let mut inter = if root { None } else {
@@ -49,20 +54,16 @@ pub fn parse(input: syn::parse::ParseStream, attrs: Vec<syn::Attribute>, root: b
 	
 	if root {
 		let braces; syn::braced!(braces in input);
-		content::parse_vec(&mut body, &braces)?
+		while !braces.is_empty() { body.push(braces.parse()?) }
 	} else if has_body {
 		let braces; syn::braced!(braces in input);
-		
 		while !braces.is_empty() {
-			if inter.is_none() {
-				if braces.peek(syn::Token![#]) && (
-					braces.peek2(syn::Ident) || braces.peek2(syn::Token![<])
-				) {
-					inter = parse_inter(&braces, assignee, &mut spans[2])?;
-					continue
-				}
-				body.push(crate::Attributed::parse(&braces, None)?)
-			} else { content::parse_vec(&mut body, &braces)? }
+			if inter.is_some() { while !braces.is_empty() {
+				body.push(braces.parse()?)
+			} } else if braces.peek(syn::Token![#]) && (
+				braces.peek2(syn::Ident) || braces.peek2(syn::Token![<])
+			) { inter = parse_inter(&braces, assignee, &mut spans[2])?; }
+			else { body.push(braces.parse()?) }
 		}
 	}
 	Ok(Item { attrs, object, spans, inter, mode, body })
@@ -72,15 +73,14 @@ enum Object { Path (Box<Path>), Ref (Punctuated<syn::Ident, syn::Token![.]>) }
 
 struct Path { path: crate::Path, group: Option<Group>, field: crate::Field }
 
-fn parse_object(input: syn::parse::ParseStream) -> syn::Result<Object> {
-	if input.parse::<syn::Token![ref]>().is_ok() {
-		return Ok(Object::Ref(crate::parse_unterminated(input)?))
-	}
-	Ok(Object::Path(Box::new(Path {
-		 path: input.parse()?,
-		group: input.peek(syn::token::Paren).then(|| input.parse()).transpose()?,
-		field: input.parse()?,
-	})))
+fn parse_object(input: syn::parse::ParseStream, path: Option<crate::Path>) -> syn::Result<Object> {
+	Ok(if let Some(path) = path {
+		Object::Path(Box::new(Path {
+			 path,
+			group: input.peek(syn::token::Paren).then(|| input.parse()).transpose()?,
+			field: input.parse()?,
+		}))
+	} else { Object::Ref(crate::parse_unterminated(input)?) })
 }
 
 struct Inter {
@@ -229,13 +229,13 @@ pub(crate) fn expand(
 			} else { attributes = crate::Attributes::Some(attrs) }
 			
 			assignee_ident = name;
-			(Assignee::Ident(&assignee_ident), builder)
+			(Assignee::Ident(None, &assignee_ident), builder)
 		}
 		Object::Ref(idents) => {
 			settings.extend(quote![#(#attrs)* #let_ _ = #idents;]);
 			assignee_field = idents;
 			attributes = crate::Attributes::Some(attrs);
-			(Assignee::Field(&assignee_field), None)
+			(Assignee::Field(None, &assignee_field), None)
 		}
 	};
 	

@@ -7,7 +7,7 @@
 use proc_macro2::{Delimiter, Group, TokenStream};
 use quote::quote;
 use syn::punctuated::Punctuated;
-use crate::{item, property, Attributed, Builder};
+use crate::{item, property, Builder};
 
 pub enum Content {
 	     Bind (Box<Bind>),
@@ -20,6 +20,12 @@ pub enum Content {
 	     Item (Box<item::Item>),
 	    Match (Box<Match>),
 	 Property (Box<property::Property>),
+}
+
+impl syn::parse::Parse for Content {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		with_attrs(input, input.call(syn::Attribute::parse_outer)?)
+	}
 }
 
 pub struct Bind {
@@ -86,7 +92,7 @@ impl syn::parse::Parse for If {
 			Some(Box::new(input.call(syn::Expr::parse_without_eager_brace)?))
 		} else { None };
 		
-		let (brace, body) = crate::parse_vec(input)?;
+		let (brace, body) = parse_vec(input)?;
 		Ok(If { else_, if_, expr, brace, body })
 	}
 }
@@ -119,110 +125,109 @@ impl syn::parse::Parse for Arm {
 		
 		let arrow = input.parse()?;
 		
-		let (brace, body) = if let Ok((brace, body)) = crate::parse_vec(input) {
+		let (brace, body) = if let Ok((brace, body)) = parse_vec(input) {
 			(Some(brace), body)
-		} else { (None, vec![Content::parse(input, None)?]) };
+		} else { (None, vec![input.parse()?]) };
 		
 		Ok(Arm { attrs, pat, guard, arrow, brace, body })
 	}
 }
 
-impl Attributed for Content {
-	fn parse(input: syn::parse::ParseStream, attrs: Option<Vec<syn::Attribute>>) -> syn::Result<Self> {
-		let attrs = attrs.map_or_else(|| input.call(syn::Attribute::parse_outer), Result::Ok)?;
+fn with_attrs(input: syn::parse::ParseStream, attrs: Vec<syn::Attribute>) -> syn::Result<Content> {
+	if let Ok(tilde) = input.parse::<syn::Token![~]>() {
+		let   last = input.parse()?;
+		let object = input.parse::<Option<syn::Token![/]>>()?.is_some();
+		let penult = next(input, attrs)?;
+		let mut rest = vec![]; while !input.is_empty() { rest.push(input.parse()?) }
 		
-		if let Ok(tilde) = input.parse::<syn::Token![~]>() {
-			let   last = input.parse()?;
-			let object = input.parse::<Option<syn::Token![/]>>()?.is_some();
-			let penult = next(input, attrs)?;
-			let mut rest = vec![]; parse_vec(&mut rest, input)?;
-			
-			Ok(Content::Built(Box::new(
-				Built { object, tilde, last, penult, rest }
-			)))
-		} else if let Ok(token) = input.parse::<syn::Lifetime>() {
-			if token.ident == "bind" {
-				if input.parse::<syn::Token![:]>().is_ok() {
-					let (if_, cond) = (input.parse::<syn::Token![if]>()?, input.parse()?);
-					let (brace, body) = crate::parse_vec(input)?;
-					
-					Ok(Content::BindColon(Box::new(
-						BindColon { attrs, token, if_, cond, brace, body }
-					)))
-				} else {
-					let init = input.parse()?;
-					
-					if input.peek(syn::token::Brace) {
-						let (brace, body) = crate::parse_vec(input)?;
-						
-						Ok(Content::Bind(Box::new(Bind {
-							token, init, mode: BindMode::Braced { attrs, brace, body }
-						})))
-					} else { Ok(Content::Bind(Box::new(Bind {
-						token, init, mode: BindMode::Unbraced(Content::parse(input, Some(attrs))?)
-					}))) }
-				}
-			} else { Err(syn::Error::new(
-				token.span(), format!("expected 'bind (or maybe 'back), found {token}")
-			)) }
-		} else if let Ok(at) = input.parse::<syn::Token![@]>() {
-			if input.peek2(syn::Token![=]) {
-				let  mut_ = input.parse()?;
-				let  name = input.parse()?;
-				let equal = input.parse()?;
-				let  expr = input.parse()?;
-				let     _ = input.parse::<syn::Token![;]>();
-				Ok(Content::Binding(Box::new(Binding { attrs, at, mut_, name, equal, expr })))
+		Ok(Content::Built(Box::new(
+			Built { object, tilde, last, penult, rest }
+		)))
+	} else if let Ok(token) = input.parse::<syn::Lifetime>() {
+		if token.ident == "bind" {
+			if input.parse::<syn::Token![:]>().is_ok() {
+				let (if_, cond) = (input.parse::<syn::Token![if]>()?, input.parse()?);
+				let (brace, body) = parse_vec(input)?;
+				
+				Ok(Content::BindColon(Box::new(
+					BindColon { attrs, token, if_, cond, brace, body }
+				)))
 			} else {
-				let ext = input.parse()?;
-				let parens;
-				let paren = syn::parenthesized!(parens in input);
-				let tokens = syn::buffer::TokenBuffer::new2(parens.parse()?);
-				let back = property::parse_back(input)?;
-				Ok(Content::Extension(Box::new(Extension { attrs, ext, paren, tokens, back })))
+				let init = input.parse()?;
+				
+				if input.peek(syn::token::Brace) {
+					let (brace, body) = parse_vec(input)?;
+					
+					Ok(Content::Bind(Box::new(Bind {
+						token, init, mode: BindMode::Braced { attrs, brace, body }
+					})))
+				} else {
+					Ok(Content::Bind(Box::new(Bind {
+						token, init, mode: BindMode::Unbraced(with_attrs(input, attrs)?)
+					})))
+				}
 			}
-		} else if input.peek(syn::Token![if]) {
-			let mut vec = vec![input.parse()?];
-			while input.peek(syn::Token![else]) { vec.push(input.parse()?) }
-			Ok(Content::If(Box::new((attrs, vec))))
-		} else if input.peek(syn::Token![match]) {
-			let token = input.parse()?;
-			let expr = input.call(syn::Expr::parse_without_eager_brace)?;
-			let braces;
-			let brace = syn::braced!(braces in input);
-			let mut arms = vec![];
-			while !braces.is_empty() { arms.push(braces.parse()?) }
-			Ok(Content::Match(Box::new(Match { attrs, token, expr, brace, arms })))
-		} else { Ok(next(input, attrs)?) }
-	}
+		} else { Err(syn::Error::new(
+			token.span(), format!("expected 'bind (or maybe 'back), found {token}")
+		)) }
+	} else if let Ok(at) = input.parse::<syn::Token![@]>() {
+		if input.peek2(syn::Token![=]) {
+			let  mut_ = input.parse()?;
+			let  name = input.parse()?;
+			let equal = input.parse()?;
+			let  expr = input.parse()?;
+			let     _ = input.parse::<syn::Token![;]>();
+			Ok(Content::Binding(Box::new(Binding { attrs, at, mut_, name, equal, expr })))
+		} else {
+			let ext = input.parse()?;
+			let parens;
+			let paren = syn::parenthesized!(parens in input);
+			let tokens = syn::buffer::TokenBuffer::new2(parens.parse()?);
+			let back = property::parse_back(input)?;
+			Ok(Content::Extension(Box::new(Extension { attrs, ext, paren, tokens, back })))
+		}
+	} else if input.peek(syn::Token![if]) {
+		let mut vec = vec![input.parse()?];
+		while input.peek(syn::Token![else]) { vec.push(input.parse()?) }
+		Ok(Content::If(Box::new((attrs, vec))))
+	} else if input.peek(syn::Token![match]) {
+		let token = input.parse()?;
+		let expr = input.call(syn::Expr::parse_without_eager_brace)?;
+		let braces;
+		let brace = syn::braced!(braces in input);
+		let mut arms = vec![]; while !braces.is_empty() { arms.push(braces.parse()?) }
+		Ok(Content::Match(Box::new(Match { attrs, token, expr, brace, arms })))
+	} else { Ok(next(input, attrs)?) }
 }
 
 fn next(input: &syn::parse::ParseBuffer, attrs: Vec<syn::Attribute>) -> syn::Result<Content> {
-	if input.peek(syn::Token![ref]) { return Ok(Content::Item(
-		Box::new(item::parse(input, attrs, false)?)
-	)) }
+	if input.parse::<syn::Token![ref]>().is_ok() { return Ok(
+		Content::Item(Box::new(item::parse(input, attrs, None, false)?))
+	) }
 	
-	let ahead = input.fork();
-	let  path = ahead.parse::<crate::Path>()?;
-	let  edit = match path {
-		crate::Path::Type(path) => path.path.get_ident().is_some(),
-		crate::Path::Field { gens, .. } => gens.is_none(),
+	let path = match input.parse()? {
+		crate::Path::Type(mut path) if path.path.get_ident().is_some() && input.peek(syn::Token![=>]) => {
+			let punctuated = Punctuated::from_iter([path.path.segments.pop().unwrap().into_value().ident]);
+			return Ok(Content::Edit(property::parse_edit(input, attrs, punctuated)?))
+		}
+		crate::Path::Field { access, gens } if gens.is_none() && input.peek(syn::Token![=>]) => {
+			return Ok(Content::Edit(property::parse_edit(input, attrs, access)?))
+		}
+		path => path
 	};
 	
-	Ok(if edit && ahead.peek(syn::Token![=>]) {
-		Content::Edit(property::parse_edit(input, attrs)?)
-	} else if ahead.peek(syn::Token![:])
-	       || ahead.peek(syn::Token![;])
-	       || ahead.peek(syn::Token![=])
-	       || ahead.peek(syn::Token![&]) {
-		Content::Property(Attributed::parse(input, Some(attrs))?)
-	} else {
-		Content::Item(Box::new(item::parse(input, attrs, false)?))
-	})
+	Ok(if input.peek(syn::Token![:])
+	   || input.peek(syn::Token![;])
+	   || input.peek(syn::Token![=])
+	   || input.peek(syn::Token![&]) { Content::Property(property::parse(input, attrs, path)?) }
+	else { Content::Item(Box::new(item::parse(input, attrs, Some(path), false)?)) })
 }
 
-pub fn parse_vec(body: &mut Vec<Content>, input: syn::parse::ParseStream) -> syn::Result<()> {
-	while !input.is_empty() { body.push(Content::parse(input, None)?) } Ok(())
+pub fn parse_vec(input: syn::parse::ParseStream) -> syn::Result<(syn::token::Brace, Vec<Content>)> {
+	let braces;
+	let (brace, mut content) = (syn::braced!(braces in input), vec![]);
+	while !braces.is_empty() { content.push(braces.parse()?) }
+	Ok((brace, content))
 }
 
 #[allow(clippy::too_many_arguments)]
