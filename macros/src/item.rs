@@ -9,78 +9,15 @@ use quote::{TokenStreamExt, quote, quote_spanned};
 use syn::punctuated::Punctuated;
 use crate::{content, property, Assignee, Builder, Mode};
 
-pub struct Item {
-	 attrs: Vec<syn::Attribute>,
-	object: Object,
-	 spans: [Span; 3], // start, end, pound
-	 inter: Option<Inter>,
-	  mode: ItemMode,
-	  body: Vec<content::Content>,
-}
-
-pub enum ItemMode { Builder(syn::Token![!]), Struct(syn::Token![~]), Normal }
-
-pub(crate) fn parse(
-	input: syn::parse::ParseStream,
-	attrs: Vec<syn::Attribute>,
-	 path: Option<crate::Path>,
-	 root: bool,
-) -> syn::Result<Item> {
-	let mut spans = [input.span(), Span::call_site(), Span::call_site()];
-	let object = parse_object(input, path)?;
-	
-	let (tildable, assignee) = match &object {
-		Object::Path(path) => (match path.path {
-			crate::Path::Type(_) => path.group.is_none(), _ => false
-		}, Assignee::Ident(None, &path.field.name)),
-		
-		Object::Ref(ref_) => (false, Assignee::Field(None, ref_))
-	};
-	
-	let mut inter = if root { None } else {
-		spans[1] = input.span();
-		parse_inter(input, assignee, &mut spans[2])?
-	};
-	
-	let mut body = vec![];
-	let has_body = inter.as_ref().map(|inter| inter.back.is_none()).unwrap_or(true);
-	let mode = if has_body {
-		if let (true, Ok(tilde)) = (tildable, input.parse::<syn::Token![~]>()) {
-			ItemMode::Struct(tilde)
-		} else if let Ok(pound) = input.parse::<syn::Token![!]>() {
-			ItemMode::Builder(pound)
-		} else { ItemMode::Normal }
-	} else { ItemMode::Normal };
-	
-	if root {
-		let braces; syn::braced!(braces in input);
-		while !braces.is_empty() { body.push(braces.parse()?) }
-	} else if has_body {
-		let braces; syn::braced!(braces in input);
-		while !braces.is_empty() {
-			if inter.is_some() { while !braces.is_empty() {
-				body.push(braces.parse()?)
-			} } else if braces.peek(syn::Token![#]) && (
-				braces.peek2(syn::Ident) || braces.peek2(syn::Token![<])
-			) { inter = parse_inter(&braces, assignee, &mut spans[2])?; }
-			else { body.push(braces.parse()?) }
-		}
-	}
-	Ok(Item { attrs, object, spans, inter, mode, body })
-}
-
 enum Object { Path (Box<Path>), Ref (Punctuated<syn::Ident, syn::Token![.]>) }
 
 struct Path { path: crate::Path, group: Option<Group>, field: crate::Field }
 
-fn parse_object(input: syn::parse::ParseStream, path: Option<crate::Path>) -> syn::Result<Object> {
-	Ok(if let Some(path) = path {
-		Object::Path(Box::new(Path {
-			 path,
-			group: input.peek(syn::token::Paren).then(|| input.parse()).transpose()?,
-			field: input.parse()?,
-		}))
-	} else { Object::Ref(crate::parse_unterminated(input)?) })
+fn as_assignee(object: &Object) -> Assignee {
+	match object {
+		Object::Path(path) => Assignee::Ident(None, &path.field.name),
+		Object::Ref(ref_) => Assignee::Field(None, ref_),
+	}
 }
 
 struct Inter {
@@ -126,6 +63,72 @@ fn parse_inter(
 	Ok(Some(Inter { inter, by_ref, mut_, mode, tokens, back }))
 }
 
+pub struct Item {
+	 attrs: Vec<syn::Attribute>,
+	object: Object,
+	 spans: [Span; 4], // start, end, pound, braces
+	 inter: Option<Inter>,
+	  mode: ItemMode,
+	  body: Vec<content::Content>,
+}
+
+pub enum ItemMode { Builder(syn::Token![!]), Struct(syn::Token![~]), Normal }
+
+pub(crate) fn parse(
+	input: syn::parse::ParseStream,
+	attrs: Vec<syn::Attribute>,
+	 path: Option<crate::Path>,
+	 root: bool,
+) -> syn::Result<Item> {
+	let mut spans = [Span::call_site(); 4]; spans[0] = input.span();
+	
+	let (tildable, mut object) = if let Some(path) = path {
+		let group = input.peek(syn::token::Paren).then(|| input.parse()).transpose()?;
+		let field = crate::parse_field(Some(&path), input)?;
+		(group.is_none(), Object::Path(Box::new(Path { path, group, field })))
+	} else { (false, Object::Ref(crate::parse_unterminated(input)?)) };
+	
+	let mut inter = if root { None } else {
+		spans[1] = input.span();
+		parse_inter(input, as_assignee(&object), &mut spans[2])?
+	};
+	
+	let mut body = vec![];
+	let has_body = inter.as_ref().map(|inter| inter.back.is_none()).unwrap_or(true);
+	let mode = if has_body {
+		if let (true, Ok(tilde)) = (tildable, input.parse::<syn::Token![~]>()) {
+			ItemMode::Struct(tilde)
+		} else if let Ok(pound) = input.parse::<syn::Token![!]>() {
+			ItemMode::Builder(pound)
+		} else { ItemMode::Normal }
+	} else { ItemMode::Normal };
+	
+	if root | has_body {
+		let braces;
+		let brace = syn::braced!(braces in input);
+		spans[3] = brace.span.join();
+		
+		if let Object::Path(path) = &mut object {
+			if path.field.auto { path.field.name.set_span(spans[3]) }
+		}
+		
+		if root {
+			while !braces.is_empty() { body.push(braces.parse()?) }
+		} else {
+			while !braces.is_empty() {
+				if inter.is_some() {
+					while !braces.is_empty() { body.push(braces.parse()?) }
+				} else if braces.peek(syn::Token![#]) && (
+					braces.peek2(syn::Ident) || braces.peek2(syn::Token![<])
+				) {
+					inter = parse_inter(&braces, as_assignee(&object), &mut spans[2])?;
+				} else { body.push(braces.parse()?) }
+			}
+		}
+	}
+	Ok(Item { attrs, object, spans, inter, mode, body })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn expand(
 	Item { mut attrs, object, spans, inter, mode, body }: Item,
@@ -144,11 +147,12 @@ pub(crate) fn expand(
 	
 	let (new_assignee, new_builder) = match object {
 		Object::Path(path) => {
-			let Path { path, group, field: crate::Field { vis, mut_, name, colon, ty } } = *path;
+			let Path { path, group, field } = *path;
+			let crate::Field { vis, mut_, name, colon, ty, auto: _ } = field;
 			
 			let stream = || {
 				let group = group.as_ref().map(|group| quote![#group])
-					.unwrap_or_else(|| quote_spanned![path.span() => ::default()]);
+					.unwrap_or_else(|| quote_spanned![spans[3] => ::default()]);
 				
 				quote![#(#attrs)* #let_ #mut_ #name = #path #group]
 			};
@@ -247,9 +251,7 @@ pub(crate) fn expand(
 	if let Assignee::None = assignee { return Ok(()) }
 	
 	let Some(Inter { inter, by_ref, mut_, mode, tokens, back }) = inter else {
-		let mut start = Punct::new('<', Spacing::Alone); start.set_span(spans[0]);
-		let mut   end = Punct::new('>', Spacing::Alone);   end.set_span(spans[1]);
-		Err(syn::Error::new_spanned(quote![#start #end], "missing #interpolation"))?
+		Err(crate::Spans::Range(spans[0], spans[1]).error("missing #interpolation"))?
 	};
 	
 	let attrs = attributes.get(fields);

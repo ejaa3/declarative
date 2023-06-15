@@ -78,7 +78,7 @@ pub(crate) fn expand(
 pub(crate) enum Visitor {
 	Error(syn::Error), Ok {
 		items: Vec<syn::ItemStruct>,
-		deque: std::collections::VecDeque<(TokenStream, Bindings)>,
+		deque: std::collections::VecDeque<(crate::Spans, TokenStream, Bindings)>,
 	}
 }
 
@@ -89,10 +89,19 @@ macro_rules! item {
 			
 			if let syn::$item::Macro(mac) = node {
 				if mac.mac.path.is_ident("view") {
+					let spans = crate::Spans::Range(
+						mac.mac.path.segments[0].ident.span(),
+						mac.mac.bang_token.span,
+					);
+					
+					if mac.mac.tokens.is_empty() {
+						return *self = Self::Error(spans.error("this view has no content"))
+					}
+					
 					return match mac.mac.parse_body().map(|root| expand(items, root)) {
 						Ok(expansion) => match expansion {
-							Ok(tuple) => {
-								deque.push_back(tuple);
+							Ok((stream, bindings)) => {
+								deque.push_back((spans, stream, bindings));
 								*node = syn::$item::Verbatim(TokenStream::new())
 							}
 							Err(error) => *self = Self::Error(error)
@@ -116,19 +125,34 @@ impl VisitMut for Visitor {
 const ERROR: &str = "views must be consumed with the `expand_view_here!` placeholder macro";
 
 pub(crate) fn parse(
-	item: &mut syn::Item, output: &mut TokenStream, stream: TokenStream, bindings: Bindings
+	    item: &mut syn::Item,
+	  output: &mut TokenStream,
+	   range: crate::Spans,
+	  stream: TokenStream,
+	bindings: Bindings
 ) -> syn::Result<()> {
-	let mut visitor = crate::Visitor { placeholder: "expand_view_here", stream: Some(stream) };
+	let (placeholder, stream) = ("expand_view_here", Some(stream));
+	let mut visitor = crate::Visitor::Ok { placeholder, stream };
 	visitor.visit_item_mut(item);
 	
-	if let Some(stream) = visitor.stream { Err(syn::Error::new_spanned(stream, ERROR))? }
+	if visitor.has_stream()? { Err(range.error(ERROR))? }
 	
 	if !bindings.spans.is_empty() {
 		let stream = Some(bindings.stream);
-		let mut visitor = crate::Visitor { placeholder: "bindings", stream };
+		let mut visitor = crate::Visitor::Ok { placeholder: "bindings", stream };
 		visitor.visit_item_mut(item);
 		
-		if visitor.stream.is_some() { crate::bindings_error(output, bindings.spans) }
+		if visitor.has_stream()? { crate::bindings_error(output, bindings.spans) }
+	} Ok(())
+}
+
+pub fn display_ty(ty: &syn::TypePath, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	if ty.qself.is_some() { write!(f, "qualified_")? }
+	
+	for segment in &ty.path.segments {
+		let mut ident = compact_str::format_compact!("{}", segment.ident);
+		ident.make_ascii_lowercase();
+		write!(f, "{ident}_")?
 	} Ok(())
 }
 
@@ -221,25 +245,6 @@ impl crate::Builder {
 	}
 }
 
-impl syn::parse::Parse for crate::Field {
-	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-		let (vis, mut_) = (input.parse()?, input.parse()?);
-		
-		let (name, colon) = match vis {
-			syn::Visibility::Inherited => match input.parse()? {
-				Some(name) => (name, input.parse()?),
-				None => (syn::Ident::new(&crate::count(), Span::call_site()), None)
-			}
-			_ => (input.parse()?, Some(input.parse()?))
-		};
-		
-		let ty = colon.is_some() && (input.peek(syn::Token![<]) || input.peek(syn::Ident));
-		let ty = ty.then(|| input.parse()).transpose()?;
-		
-		Ok(crate::Field { vis, mut_, name, colon, ty })
-	}
-}
-
 impl crate::Path {
 	pub fn is_long(&self) -> bool {
 		let Self::Type(path) = self else { return false };
@@ -251,6 +256,15 @@ impl crate::Path {
 			Self::Type(ty) => ty.path.segments.last().map(|seg| seg.ident.span()),
 			Self::Field { access, .. } => access.last().map(syn::Ident::span),
 		}.unwrap_or(Span::call_site())
+	}
+}
+
+impl std::fmt::Display for crate::Path {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::Type(ty) => display_ty(ty, f)?,
+			Self::Field { access, .. } => for ident in access { write!(f, "{ident}_")? }
+		} Ok(())
 	}
 }
 
@@ -276,13 +290,42 @@ impl quote::ToTokens for crate::Path {
 	}
 }
 
+impl crate::Spans {
+	pub fn error(self, message: impl std::fmt::Display) -> syn::Error {
+		match self {
+			Self::Single(span) => syn::Error::new(span, message),
+			Self::Range(start, end) => {
+				let mut a = Punct::new('<', Spacing::Alone); a.set_span(start);
+				let mut b = Punct::new('>', Spacing::Alone); b.set_span(end);
+				syn::Error::new_spanned(quote::quote![#a #b], message)
+			}
+		}
+	}
+}
+
+impl crate::Visitor {
+	pub fn has_stream(self) -> syn::Result<bool> {
+		match self {
+			crate::Visitor::Ok { stream, .. } => Ok(stream.is_some()),
+			crate::Visitor::Error(error) => Err(error),
+		}
+	}
+	fn make_error(&mut self, mac: &syn::Macro) {
+		*self = Self::Error(crate::Spans::Range(
+			mac.path.get_ident().unwrap().span(), mac.bang_token.span,
+		).error("this placeholder must have no content"))
+	}
+}
+
 impl VisitMut for crate::Visitor {
 	fn visit_expr_mut(&mut self, node: &mut syn::Expr) {
-		if self.stream.is_none() { return }
+		let crate::Visitor::Ok { placeholder, stream } = self else { return };
+		if stream.is_none() { return }
 		
 		if let syn::Expr::Macro(mac) = node {
-			if mac.mac.path.is_ident(self.placeholder) {
-				let group = Group::new(Delimiter::Brace, self.stream.take().unwrap());
+			if mac.mac.path.is_ident(placeholder) {
+				if !mac.mac.tokens.is_empty() { return self.make_error(&mac.mac) }
+				let group = Group::new(Delimiter::Brace, stream.take().unwrap());
 				let mut stream = TokenStream::new(); stream.append(group);
 				return *node = syn::Expr::Verbatim(stream)
 			}
@@ -291,12 +334,14 @@ impl VisitMut for crate::Visitor {
 	}
 	
 	fn visit_stmt_mut(&mut self, node: &mut syn::Stmt) {
-		if self.stream.is_none() { return }
+		let crate::Visitor::Ok { placeholder, stream } = self else { return };
+		if stream.is_none() { return }
 		
 		if let syn::Stmt::Macro(mac) = node {
-			if mac.mac.path.is_ident(self.placeholder) {
+			if mac.mac.path.is_ident(placeholder) {
+				if !mac.mac.tokens.is_empty() { return self.make_error(&mac.mac) }
 				return *node = syn::Stmt::Expr(
-					syn::Expr::Verbatim(self.stream.take().unwrap()), None
+					syn::Expr::Verbatim(stream.take().unwrap()), None
 				)
 			}
 		}

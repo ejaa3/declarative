@@ -78,16 +78,39 @@ pub fn parse_back(input: syn::parse::ParseStream) -> syn::Result<Option<Box<Back
 			input.parse::<syn::Lifetime>()?
 		} else { return Ok(None) };
 	
-	let (field, build) = (input.parse()?, input.parse()?);
-	let braces; syn::braced!(braces in input);
+	let (mut field, build) = (crate::parse_field(None, input)?, input.parse()?);
+	
+	let braces;
+	let brace = syn::braced!(braces in input);
+	
+	if field.auto { field.name.set_span(brace.span.join()) }
+	
 	let mut body = vec![];
 	while !braces.is_empty() { body.push(braces.parse()?) }
+	
 	Ok(Some(Box::new(Back { token, field, build, body })))
+}
+
+fn builds(content: Option<&content::Content>) -> bool {
+	content.map(|content| match content {
+		content::Content::Built(built) => built.rest.is_empty(),
+		
+		| content::Content::Bind(_)
+		| content::Content::BindColon(_)
+		| content::Content::Edit(_)
+		| content::Content::Extension(_)
+		| content::Content::If(_)
+		| content::Content::Match(_) => false,
+		
+		| content::Content::Binding(_)
+		| content::Content::Item(_)
+		| content::Content::Property(_) => true
+	}).unwrap_or(true)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn expand_back(
-	Back { token, field: crate::Field { vis, mut_, name, colon, ty }, build, body }: Back,
+	Back { token, field, build, body }: Back,
 	 objects: &mut TokenStream,
 	builders: &mut Vec<Builder>,
 	settings: &mut TokenStream,
@@ -98,7 +121,10 @@ pub(crate) fn expand_back(
 ) -> syn::Result<()> {
 	let pattrs = attrs.get(fields);
 	let let_ = syn::Ident::new("let", token.span());
-	let left = quote![#(#pattrs)* #let_ #mut_ #name =];
+	let crate::Field { vis, mut_, name, colon, ty, auto } = field;
+	
+	let left = if auto && build.is_some() && builds(body.first()) && builds(body.last())
+		{ quote![#(#pattrs)*] } else { quote![#(#pattrs)* #let_ #mut_ #name =] };
 	
 	let index = if let Some(build) = build {
 		#[cfg(feature = "builder-mode")]

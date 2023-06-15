@@ -7,8 +7,8 @@
 # <img src="logo.svg" width="96" align="left"/> `declarative`
 
 [![REUSE status](https://api.reuse.software/badge/github.com/ejaa3/declarative)](https://api.reuse.software/info/github.com/ejaa3/declarative)
-[![declarative on crates.io](https://img.shields.io/crates/v/declarative.svg)](https://crates.io/crates/declarative)
-[![Matrix](https://img.shields.io/matrix/declarative-rs:matrix.org?color=6081D4&label=matrix)](https://matrix.to/#/#declarative-rs:matrix.org)
+[![declarative on crates.io](https://img.shields.io/crates/v/declarative.svg?color=6081D4)](https://crates.io/crates/declarative)
+[![Chat on Matrix](https://matrix.to/img/matrix-badge.svg)](https://matrix.to/#/#declarative-rs:matrix.org)
 
 A proc-macro library for creating complex reactive views declaratively and quickly.
 
@@ -16,7 +16,7 @@ To use it, add to your Cargo.toml:
 
 ~~~ toml
 [dependencies.declarative]
-version = '0.5.2'
+version = '0.5.3'
 
 # for a custom builder mode:
 features = ['builder-mode']
@@ -25,13 +25,13 @@ features = ['builder-mode']
 features = ['gtk-rs'] # gives a suitable `builder_mode!` macro
 ~~~
 
-To learn how to use the macros, it is best to clone the repository, read the source code of the examples in alphabetical order and run them like this:
+To learn how to use macros, currently the best way is to clone the repository, read the source code of the examples in alphabetical order and run them like this:
 
 ~~~ bash
 cargo run --features gtk-rs --example EXAMPLE_NAME
 ~~~
 
-The examples depend on [gtk-rs], so you should familiarize yourself with [gtk-rs] a bit before:  
+Since version 0.5.3 a future detailed book is feasible, but in the meantime the examples, which depend on [gtk-rs], so you should familiarize yourself with [gtk-rs] a bit before:  
 https://gtk-rs.org/gtk4-rs/stable/latest/book/
 
 [gtk-rs]: https://gtk-rs.org

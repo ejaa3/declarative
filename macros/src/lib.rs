@@ -41,6 +41,11 @@ macro_rules! unwrap (($expr:expr) => (match $expr {
 /// }
 /// ~~~
 pub fn block(stream: TokenStream) -> TokenStream {
+	if stream.is_empty() {
+		let error = syn::Error::new(Span::call_site(), "this view block has no content");
+		return TokenStream::from(error.into_compile_error())
+	}
+	
 	let mut items = vec![];
 	let (mut stream, bindings) = unwrap! {
 		view::expand(&mut items, syn::parse_macro_input!(stream))
@@ -109,19 +114,21 @@ pub fn view(stream: TokenStream, code: TokenStream) -> TokenStream {
 		
 		match visitor {
 			view::Visitor::Ok { mut items, mut deque } => {
-				if deque.is_empty() { panic!("there must be at least one `view!`") }
+				if deque.is_empty() { return TokenStream::from(
+					syn::Error::new(Span::call_site(), NO_VIEW).into_compile_error()
+				) }
 				
-				while let Some((stream, bindings)) = deque.pop_front() {
-					unwrap!(view::parse(item, &mut output, stream, bindings));
+				while let Some((spans, stream, bindings)) = deque.pop_front() {
+					unwrap!(view::parse(item, &mut output, spans, stream, bindings));
 					fill(item, &mut output, &mut items)
 				}
 			}
 			view::Visitor::Error(error) => return TokenStream::from(error.into_compile_error())
 		}
 	} else {
-		let mut structs = vec![];
+		let (spans, mut structs) = (crate::Spans::Single(Span::call_site()), vec![]);
 		let (stream, bindings) = unwrap!(view::expand(&mut structs, syn::parse_macro_input!(stream)));
-		unwrap!(view::parse(item, &mut output, stream, bindings));
+		unwrap!(view::parse(item, &mut output, spans, stream, bindings));
 		fill(item, &mut output, &mut structs)
 	}
 	
@@ -176,6 +183,7 @@ struct Field {
 	 name: syn::Ident,
 	colon: Option<syn::Token![:]>,
 	   ty: Option<Box<syn::TypePath>>,
+	 auto: bool,
 }
 
 enum Mode { Field(Span), Method(Span), FnField(Span) }
@@ -187,21 +195,15 @@ enum Path {
 	}
 }
 
-struct Visitor { placeholder: &'static str, stream: Option<TokenStream2> }
+enum Spans { Single(Span), Range(Span, Span) }
+
+enum Visitor {
+	Ok { placeholder: &'static str, stream: Option<TokenStream2> },
+	Error(syn::Error),
+}
 
 fn bindings_error(stream: &mut TokenStream2, spans: Vec<Span>) {
 	for span in spans { stream.extend(syn::Error::new(span, ERROR).to_compile_error()) }
-}
-
-fn count() -> compact_str::CompactString {
-	use std::cell::RefCell;
-	thread_local![static COUNT: RefCell<usize> = RefCell::new(0)];
-	
-	COUNT.with(|cell| {
-		let count = *cell.borrow();
-		*cell.borrow_mut() = count.wrapping_add(1);
-		compact_str::format_compact!("_declarative_{}", count)
-	})
 }
 
 fn extend_attributes(attrs: &mut Vec<syn::Attribute>, pattrs: &[syn::Attribute]) {
@@ -256,10 +258,44 @@ fn try_bind(at: syn::Token![@], bindings: &mut Bindings, expr: &mut syn::Expr) -
 	}
 	
 	let stream = Some(std::mem::take(&mut bindings.stream));
-	let mut visitor = Visitor { placeholder: "bindings", stream };
+	let mut visitor = Visitor::Ok { placeholder: "bindings", stream };
 	visitor.visit_expr_mut(expr);
 	
-	if visitor.stream.is_some() { Err(syn::Error::new_spanned(expr, ERROR)) } else { Ok(()) }
+	if visitor.has_stream()? { Err(syn::Error::new_spanned(expr, ERROR)) } else { Ok(()) }
+}
+
+fn parse_field(display: Option<&dyn std::fmt::Display>, input: syn::parse::ParseStream) -> syn::Result<Field> {
+	let (vis, mut_) = (input.parse()?, input.parse()?);
+	
+	let tuple = match vis {
+		syn::Visibility::Inherited => match input.parse()? {
+			Some(name) => Some((name, input.parse()?)),
+			None => None
+		}
+		_ => Some((input.parse()?, Some(input.parse()?)))
+	};
+	
+	let ty = tuple.is_some() && (input.peek(syn::Token![<]) || input.peek(syn::Ident));
+	let ty = ty.then(|| input.parse()).transpose()?;
+	
+	struct Name<'a>(Option<&'a syn::TypePath>);
+	
+	impl std::fmt::Display for Name<'_> {
+		fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+			if let Some(ty) = self.0 { view::display_ty(ty, f) } else { write!(f, "back_") }
+		}
+	}
+	
+	let auto = tuple.is_none();
+	thread_local![static COUNT: std::cell::RefCell<usize> = std::cell::RefCell::new(0)];
+	
+	let (name, colon) = tuple.unwrap_or_else(|| (syn::Ident::new(&COUNT.with(|cell| {
+		let count = *cell.borrow();
+		*cell.borrow_mut() = count.wrapping_add(1);
+		compact_str::format_compact!("{}{count}", display.unwrap_or(&Name(ty.as_deref())))
+	}), Span::call_site()), None));
+	
+	Ok(Field { vis, mut_, name, colon, ty, auto })
 }
 
 fn parse_unterminated<T, P>(input: syn::parse::ParseStream) -> syn::Result<Punctuated<T, P>>
@@ -274,7 +310,12 @@ where T: syn::parse::Parse, P: syn::parse::Parse {
 	Ok(punctuated)
 }
 
-const    ERROR: &str = "bindings must be consumed with the `bindings!` placeholder macro";
-const  NO_TYPE: &str = "a type must be specified after the colon";
+const ERROR: &str = "bindings must be consumed with the `bindings!` placeholder macro";
+
+const NO_TYPE: &str = "a type must be specified after the colon";
+
 const NO_FIELD: &str = "a colon cannot be used if a struct has not been \
 	declared before the root item or within a binding or conditional scope";
+
+const NO_VIEW: &str = "if no view code is written as the content of this attribute, at \
+	least one view must be created with `view!` in the scope of a `mod`, `impl` or `trait`";

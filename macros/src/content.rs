@@ -61,16 +61,16 @@ pub struct Binding {
 }
 
 pub struct Built {
-	object: bool,
-	 tilde: syn::Token![~],
-	  last: Option<syn::Token![~]>,
-	penult: Content,
-	  rest: Vec<Content>,
+	  object: bool,
+	   tilde: syn::Token![~],
+	    last: Option<syn::Token![~]>,
+	  penult: Content,
+	pub rest: Vec<Content>,
 }
 
 pub struct Extension {
 	 attrs: Vec<syn::Attribute>,
-	   ext: syn::TypePath,
+	  path: crate::Path,
 	 paren: syn::token::Paren,
 	tokens: syn::buffer::TokenBuffer,
 	  back: Option<Box<property::Back>>,
@@ -179,12 +179,12 @@ fn with_attrs(input: syn::parse::ParseStream, attrs: Vec<syn::Attribute>) -> syn
 			let     _ = input.parse::<syn::Token![;]>();
 			Ok(Content::Binding(Box::new(Binding { attrs, at, mut_, name, equal, expr })))
 		} else {
-			let ext = input.parse()?;
+			let path = input.parse()?;
 			let parens;
 			let paren = syn::parenthesized!(parens in input);
 			let tokens = syn::buffer::TokenBuffer::new2(parens.parse()?);
 			let back = property::parse_back(input)?;
-			Ok(Content::Extension(Box::new(Extension { attrs, ext, paren, tokens, back })))
+			Ok(Content::Extension(Box::new(Extension { attrs, path, paren, tokens, back })))
 		}
 	} else if input.peek(syn::Token![if]) {
 		let mut vec = vec![input.parse()?];
@@ -332,7 +332,7 @@ pub(crate) fn expand(
 			*edit, objects, builders, settings, bindings, fields, pattrs, assignee
 		),
 		Content::Extension(extension) => {
-			let Extension { mut attrs, ext, paren, tokens, back } = *extension;
+			let Extension { mut attrs, path, paren, tokens, back } = *extension;
 			let mut stream = TokenStream::new();
 			
 			if crate::find_pound(&mut tokens.begin(), &mut stream, assignee) {
@@ -344,9 +344,9 @@ pub(crate) fn expand(
 					crate::extend_attributes(&mut attrs, pattrs);
 					property::expand_back(
 						*back, objects, builders, settings, bindings, fields,
-						crate::Attributes::Some(attrs), quote![#ext #group]
+						crate::Attributes::Some(attrs), quote![#path #group]
 					)
-				} else { Ok(settings.extend(quote![#(#pattrs)* #(#attrs)* #ext #group;])) }
+				} else { Ok(settings.extend(quote![#(#pattrs)* #(#attrs)* #path #group;])) }
 			} else { Err(syn::Error::new(tokens.begin().span(), "no single `#` found around here")) }
 		}
 		Content::If(if_) => {

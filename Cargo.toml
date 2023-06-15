@@ -12,7 +12,7 @@ edition     = '2021'
 keywords    = ['GUI', 'macro', 'reactive', 'view']
 license     = 'Apache-2.0 OR MIT'
 repository  = 'https://github.com/ejaa3/declarative/'
-version     = '0.5.2'
+version     = '0.5.3'
 
 [package]
 include     = ['/LICENSES', '/src', 'Cargo.toml', 'README.md']
@@ -27,7 +27,7 @@ repository  = { workspace = true }
 version     = { workspace = true }
 
 [dependencies]
-declarative = { package = 'declarative-macros', version = '0.5.2', path = 'macros' }
+declarative = { package = 'declarative-macros', version = '0.5.3', path = 'macros' }
 
 [features]
 builder-mode = ['declarative/builder-mode']
