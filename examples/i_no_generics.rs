@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use declarative::{builder_mode, clone, view};
+use declarative::{clone, construct, view};
 use gtk::{glib, prelude::*};
 use std::{cell::{OnceCell, RefCell, RefMut}, rc::Rc};
 
@@ -34,25 +34,23 @@ impl Child { // here neither
 	view! {
 		struct Widgets { }
 		
-		gtk::Box root: !{ // we export the root widget
+		gtk::Box ref root { // we export the root widget
 			orientation: gtk::Orientation::Vertical
 			~spacing: 6
 			
-			gtk::Label label: #append(&#) !{ // we also export widgets that refresh
+			append: &_ @ gtk::Label ref label { // we also export widgets that refresh
 				label: &format!("This is the {nth} child")
 				
 				// we can use `self` here because of the position of `bindings!` (below):
 				'bind set_label: &format!("The {} count is: {}", self.nth, self.count.borrow())
 			}
-			
-			gtk::Button::with_label("Increase") #append(&#) {
+			append: &_ @ gtk::Button::with_label("Increase") {
 				connect_clicked: clone![this; move |_| {
 					this.update(|mut count| *count = count.wrapping_add(1));
 					this.parent.notify_child_update(nth);
 				}]
 			}
-			
-			gtk::Button::with_label("Decrease") #append(&#) {
+			append: &_ @ gtk::Button::with_label("Decrease") {
 				connect_clicked: clone![this; move |_| {
 					this.update(|mut count| *count = count.wrapping_sub(1));
 					this.parent.notify_child_update(nth);
@@ -92,43 +90,37 @@ impl Parent {
 		window.present()
 	}
 	
-	view! {
-		gtk::ApplicationWindow window !{
-			application: app
-			title: "Components"
+	view![ gtk::ApplicationWindow window {
+		application: app
+		title: "Components"
+		titlebar: &gtk::HeaderBar::new()
+		
+		child: &_ @ gtk::Box {
+			orientation: gtk::Orientation::Vertical
+			spacing: 6
+			margin_top: 6
+			margin_bottom: 6
+			margin_start: 6
+			~margin_end: 6
 			
-			gtk::HeaderBar #titlebar(&#) { }
+			// we compose a bit differently than before:
+			append: &first_child.widgets.get().unwrap().root
 			
-			gtk::Box #child(&#) !{
-				orientation: gtk::Orientation::Vertical
-				spacing: 6
-				margin_top: 6
-				margin_bottom: 6
-				margin_start: 6
-				~margin_end: 6
-				
-				// we interpolate a bit differently than before:
-				ref first_child { #append(&#.widgets.get().unwrap().root) }
-				
-				Child::new("Second", this.clone()) second_child {
-					#append(&#.widgets.get().unwrap().root)
-				}
-				
-				gtk::Label label #append(&#) !{
-					label: "Waiting for message…"
-					'bind set_label: &format!("{nth} child updated")
-				}
-				
-				gtk::Button::with_label("Reset first child") #append(&#) {
-					connect_clicked: move |_| first_child.reset();
-				}
-				
-				gtk::Button::with_label("Reset second child") #append(&#) {
-					connect_clicked: move |_| second_child.reset();
-				}
+			append: &_.widgets.get().unwrap().root @
+				Child::new("Second", this.clone()) second_child { }
+			
+			append: &_ @ gtk::Label label {
+				label: "Waiting for message…"
+				'bind set_label: &format!("{nth} child updated")
+			}
+			append: &_ @ gtk::Button::with_label("Reset first child") {
+				connect_clicked: move |_| first_child.reset()
+			}
+			append: &_ @ gtk::Button::with_label("Reset second child") {
+				connect_clicked: move |_| second_child.reset()
 			}
 		}
-	}
+	} ];
 	
 	fn notify_child_update(&self, nth: &str) {
 		let label = self.label.get().unwrap();

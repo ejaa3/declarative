@@ -4,26 +4,22 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use declarative::{builder_mode, view};
+use declarative::{construct, view};
 use gtk::{glib, prelude::*};
 
-// two small extensions for demo purposes:
-
-fn inner_extension(page: &gtk::StackPage) {
-	page.set_name("fourth_name");
-	page.set_title("Fourth");
+fn become_the_third(page: &gtk::StackPage) {
+	page.set_name("third_page");
+	page.set_title("Third");
 }
 
-fn outer_extension(stack: &gtk::Stack, name: &str, title: &str) -> gtk::Label {
+fn add_label(name: &str, title: &str, stack: &gtk::Stack) -> gtk::Label {
 	let label = gtk::Label::default();
 	stack.add_titled(&label, Some(name), title);
 	label
 }
 
 #[view]
-mod example {
-	use super::*;
-	
+impl Template {
 	pub fn start(app: &gtk::Application) {
 		let changes = std::cell::Cell::new(0_u8);
 		expand_view_here! { }
@@ -31,76 +27,64 @@ mod example {
 	}
 	
 	view! {
-		gtk::ApplicationWindow window !{
+		#[allow(unused)]
+		struct Template { }
+		
+		gtk::ApplicationWindow window {
 			application: app
 			default_height: 300
 			default_width: 360
+			titlebar: &gtk::HeaderBar::new()
 			
-			gtk::HeaderBar #titlebar(&#) { }
-			
-			gtk::Box #child(&#) {
-				gtk::StackSidebar #append(&#) { set_stack: &stack }
-				
-				gtk::Stack stack #append(&#) !{
+			child: &_ @ gtk::Box {
+				append: &_ @ gtk::StackSidebar { stack: &stack }
+				append: &_ @ gtk::Stack stack {
 					hexpand: true
 					margin_bottom: 12
 					margin_end: 12
 					margin_start: 12
 					~margin_top: 12
 					
-					// some methods return something (in this case a `BindingBuilder`):
-					bind_property: "visible-child-name", &window, "title" // separate arguments with comma
-						// 'back edits the return of the method or interpolation that was called back
-						'back !{ sync_create; } // even in builder mode (a `.build()` is chained)
+					// some methods return something, in this case a `BindingBuilder`:
+					bind_property: "visible-child-name", &window, "title"
+						// 'back edits the return of the function or method called back
+						'back { sync_create; } // by default edits under the builder pattern
+						// the tildes explained in the first example work the same with 'back,
+						// specifically the fourth and fifth arm of the macro `construct!`
 					
-					#[allow(unused_mut)] // note that attributes affect everything inside
-					gtk::Label !{
-						label: "With body"
-						
-						// the method of this interpolation returns a `gtk::StackPage`:
-						#add_titled(&#, None, "First")
-							// in this case you edit the return with 'back within the scope,
-							// and also give it a variable name and make it mutable as well:
-							'back mut returned_page { set_name: "first_name" }
-					}
-					
-					gtk::Label::new(Some("Without body")) #add_child(&#)
-					// if you want to edit the return of the interpolation without
-					// editing the item, you can avoid extra braces with 'back:
-					'back { set_name: "second_name"; set_title: "Second" }
+					add_titled: &_, None, "First" // this method returns a `gtk::StackPage`
+						@ gtk::Label { label: "Composition" } // 'back must be placed after items
+						'back { set_name: "first_page" }! // with `!` does not edit under the builder pattern
 					
 					// the above is equivalent to:
-					add_child: &gtk::Label::new(Some("As an argument"))
-						'back { set_name: "third_name"; set_title: "Third" }
+					add_titled: &gtk::Label::new(Some("Non-composition")), None, "Second"
+						// we can export the return to the `Template` struct like this:
+						'back ref returned_page as gtk::StackPage { set_name: "second_page" }!
 					
-					gtk::Label !{
-						#add_child(&#) 'back {
-							@inner_extension(&#) // you can extend what `add_child()` returns
-							'bind set_title: &format!("Changes: {}", changes.get())
-						}
-						label: "'back supports reactivity!"
-					}
+					add_child: &_ @ gtk::Label { label: "'back supports reactivity!" } 'back {
+						become_the_third: &_ // a function defined above within the scope of 'back
+						'bind set_title: &format!("Changes: {}", changes.get())
+					}!
 					
-					// you can also edit the return of an `@extension(#)` with 'back:
-					@outer_extension(&#, "fifth_name", "Fifth")
-						'back { set_label: "From an extension" }
+					#[allow(unused_mut)] // note that attributes affect everything inside items and 'back
+					add_label: "fourth_page", "Fourth", &_ // 'back with a function defined above
+						'back mut { set_label: "Mutable return" }! // `mut` if the return needs to be mutable
 					
-					@outer_extension(&#, "sixth_name", "Sixth") 'back {
-						'bind set_label: &format!("Changes (from an extension): {}", changes.get())
-					} // even reactively
+					add_label: "fifth_page", "Fifth", &_ // even reactively
+						'back { 'bind set_label: &format!("Changes (again): {}", changes.get()) }!
 					
-					connect_visible_child_notify: @move |_| {
+					connect_visible_child_notify: move |_| {
 						changes.set(changes.get().wrapping_add(1));
 						bindings! { }
 					}
 				}
-			}
+			}!
 		}
 	}
 }
 
 fn main() -> glib::ExitCode {
 	let app = gtk::Application::default();
-	app.connect_activate(example::start);
+	app.connect_activate(Template::start);
 	app.run()
 }

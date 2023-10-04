@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use declarative::{builder_mode, clone, view};
+use declarative::{clone, construct, view};
 use gtk::{glib, prelude::*};
 use std::{cell::{OnceCell, RefCell, RefMut}, rc::Rc};
 
@@ -37,11 +37,11 @@ impl View {
 		let view = Rc::new(Self { state, widgets: OnceCell::new() });
 		
 		expand_view_here! { }
+		window.present();
 		
 		// we give the refreshable widgets to `view`:
-		view.widgets.set(Widgets { window, label }).unwrap_or(());
+		view.widgets.set(Widgets { window, label }).unwrap_or_else(|_| panic!());
 		view.refresh(); // initial view refresh
-		view.widgets.get().unwrap().window.present() // we show the window
 	}
 	
 	fn update(&self, update_state: fn(RefMut<State>)) {
@@ -50,45 +50,40 @@ impl View {
 		self.refresh() // remember to refresh after updating the state
 	}
 	
-	view! {
-		// we name the refreshable widgets the same as the fields:
-		gtk::ApplicationWindow window !{
-			application: app
+	// we name the refreshable widgets the same as the fields:
+	view![ gtk::ApplicationWindow window {
+		application: app
+		titlebar: &gtk::HeaderBar::new()
+		
+		'bind match state.count % 2 == 0 {
+			true  => set_title: Some("The value is even")
+			false => set_title: Some("The value is odd")
+		}
+		
+		child: &_ @ gtk::Grid {
+			column_spacing: 6
+			row_spacing: 6
+			margin_top: 6
+			margin_bottom: 6
+			margin_start: 6
+			~margin_end: 6
 			
-			gtk::HeaderBar #titlebar(&#) { }
-			
-			'bind match state.count % 2 == 0 {
-				true  => set_title: Some("The value is even")
-				false => set_title: Some("The value is odd")
+			attach: &_, 0, 0, 2, 1 @ gtk::Label label { // the other widget
+				hexpand: true
+				'bind set_label: &format!("The count is: {}", state.count)
 			}
-			
-			gtk::Grid #child(&#) !{
-				column_spacing: 6
-				row_spacing: 6
-				margin_top: 6
-				margin_bottom: 6
-				margin_start: 6
-				~margin_end: 6
-				
-				gtk::Label label #attach(&#, 0, 0, 2, 1) !{ // the other widget
-					hexpand: true
-					'bind set_label: &format!("The count is: {}", state.count)
-				}
-				
-				gtk::Button::with_label("Increase") #attach(&#, 0, 1, 1, 1) {
-					connect_clicked: clone![view; move |_| view.update(
-						|mut state| state.count = state.count.wrapping_add(1)
-					)]
-				}
-				
-				gtk::Button::with_label("Decrease") #attach(&#, 1, 1, 1, 1) {
-					connect_clicked: clone![view; move |_| view.update(
-						|mut state| state.count = state.count.wrapping_sub(1)
-					)]
-				}
+			attach: &_, 0, 1, 1, 1 @ gtk::Button::with_label("Increase") {
+				connect_clicked: clone![view; move |_| view.update(
+					|mut state| state.count = state.count.wrapping_add(1)
+				)]
+			}
+			attach: &_, 1, 1, 1, 1 @ gtk::Button::with_label("Decrease") {
+				connect_clicked: clone![view; move |_| view.update(
+					|mut state| state.count = state.count.wrapping_sub(1)
+				)]
 			}
 		}
-	}
+	} ];
 }
 
 fn main() -> glib::ExitCode {

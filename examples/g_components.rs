@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use declarative::{builder_mode, clone, view};
+use declarative::{clone, construct, view};
 use gtk::{glib, prelude::*};
 
 // a component is a template with its own states and channels (usually one of each)
@@ -17,14 +17,14 @@ macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send($msg).unwrap()] }
 struct Child { // basic structure of a component
 	root: gtk::Box, // the main widget of this component
 	  tx: glib::Sender<Msg> // a transmitter to send messages to this component
-}
+} // we could have declared the structure in the view with just the `tx` field
 
 #[view]
 impl Child {
 	// `nth` will be the child number ("First" or "Second") and we will communicate
 	// with the parent component through a reference to its transmitter (parent_tx):
 	fn new(nth: &'static str, parent_tx: glib::Sender<&'static str>) -> Self {
-		let (tx, rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
+		let (tx, rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
 		let mut count = 0; // the state
 		
 		expand_view_here! { }
@@ -38,88 +38,77 @@ impl Child {
 		rx.attach(None, move |msg| {
 			update(&mut count, msg);
 			bindings! { } // we can refresh the view like this
-			glib::Continue(true)
+			glib::ControlFlow::Continue
 		});
 		
 		Self { root, tx }
 	}
 	
-	view! {
-		gtk::Box root !{
-			orientation: gtk::Orientation::Vertical
-			~spacing: 6
-			
-			gtk::Label #append(&#) !{
-				label: glib::gformat!("This is the {nth} child")
-				'bind set_label: &format!("The {nth} count is: {count}")
-			}
-			
-			gtk::Button::with_label("Increase") #append(&#) {
-				// for several clones use commas:
-				connect_clicked: clone![tx, parent_tx; move |_| {
-					send!(Msg::Increase => tx);
-					send!(nth => parent_tx);
-				}]
-			}
-			
-			gtk::Button::with_label("Decrease") #append(&#) {
-				connect_clicked: clone![tx, parent_tx; move |_| {
-					send!(Msg::Decrease => tx);
-					send!(nth => parent_tx);
-				}]
-			}
+	view![ gtk::Box root {
+		orientation: gtk::Orientation::Vertical
+		~spacing: 6
+		
+		append: &_ @ gtk::Label {
+			label: glib::gformat!("This is the {nth} child")
+			'bind set_label: &format!("The {nth} count is: {count}")
 		}
-	}
+		append: &_ @ gtk::Button::with_label("Increase") {
+			// for several clones use commas:
+			connect_clicked: clone![tx, parent_tx; move |_| {
+				send!(Msg::Increase => tx);
+				send!(nth => parent_tx);
+			}]
+		}
+		append: &_ @ gtk::Button::with_label("Decrease") {
+			connect_clicked: clone![tx, parent_tx; move |_| {
+				send!(Msg::Decrease => tx);
+				send!(nth => parent_tx);
+			}]
+		}
+	} ];
 }
 
-#[view { // this is the parent component (the composite)
-	gtk::ApplicationWindow window !{
-		application: app
-		title: "Components"
+#[view[ gtk::ApplicationWindow window { // this is the parent component (the composite)
+	application: app
+	title: "Components"
+	titlebar: &gtk::HeaderBar::new()
+	
+	child: &_ @ gtk::Box {
+		orientation: gtk::Orientation::Vertical
+		spacing: 6
+		margin_top: 6
+		margin_bottom: 6
+		margin_start: 6
+		~margin_end: 6
 		
-		gtk::HeaderBar #titlebar(&#) { }
+		// remember that the component widget is the `root` field:
+		append: &_.root @ Child::new("First", tx.clone()) first_child { }
+		// we use composition just to give a variable name
 		
-		gtk::Box #child(&#) !{
-			orientation: gtk::Orientation::Vertical
-			spacing: 6
-			margin_top: 6
-			margin_bottom: 6
-			margin_start: 6
-			~margin_end: 6
-			
-			// you can add a child component here:
-			Child::new("First", tx.clone()) first_child {
-				#append(&#.root) // remember that the component widget is the `root` field
-			}
-			
-			// or use an argument or variable before view expansion:
-			ref second_child { #append(&#.root) }
-			
-			gtk::Label #append(&#) !{
-				label: "Waiting for message…"
-				'bind set_label: &format!("{nth} child updated")
-			}
-			
-			gtk::Button::with_label("Reset first child") #append(&#) {
-				// sending messages to a child component is as simple as using its own transmitter:
-				connect_clicked: move |_| send!(Msg::Reset => first_child.tx) // (its `tx` field)
-				// just in case `clone!` has a convenient syntax for cloning fields like `tx` in this case
-			}
-			
-			gtk::Button::with_label("Reset second child") #append(&#) {
-				connect_clicked: move |_| send!(Msg::Reset => second_child.tx)
-			}
+		append: &second_child.root // or use an argument or variable before view expansion
+		
+		append: &_ @ gtk::Label {
+			label: "Waiting for message…"
+			'bind set_label: &format!("{nth} child updated")
+		}
+		append: &_ @ gtk::Button::with_label("Reset first child") {
+			// sending messages to a child component is as simple as using its own transmitter:
+			connect_clicked: move |_| send!(Msg::Reset => first_child.tx) // (its `tx` field)
+			// just in case `clone!` has a convenient syntax for cloning fields like `tx` in this case
+		}
+		append: &_ @ gtk::Button::with_label("Reset second child") {
+			connect_clicked: move |_| send!(Msg::Reset => second_child.tx)
 		}
 	}
-}]
+} ]]
 
 fn start(app: &gtk::Application) {
-	let (tx, rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
+	let (tx, rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
 	let second_child = Child::new("Second", tx.clone());
 	
 	expand_view_here! { }
 	
-	rx.attach(None, move |nth| { bindings!(); glib::Continue(true) });
+	rx.attach(None, move |nth| { bindings!(); glib::ControlFlow::Continue });
 	window.present()
 }
 

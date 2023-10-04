@@ -5,11 +5,11 @@
  */
 
 use proc_macro2::{Delimiter, Group, Punct, Spacing, Span, TokenStream};
-use quote::TokenStreamExt;
+use quote::{TokenStreamExt, quote_spanned};
 use syn::{punctuated::Punctuated, visit_mut::VisitMut};
-use crate::{item, Assignee, Attributes, Bindings};
+use crate::{item, Attributes, Bindings, Range};
 
-pub enum Root { Struct(syn::ItemStruct), Item(item::Item) }
+pub(crate) enum Root { Struct(syn::ItemStruct), Item(item::Item) }
 
 pub struct Roots(Vec<Root>);
 
@@ -28,9 +28,7 @@ impl syn::parse::Parse for Roots {
 				)? };
 				
 				item.attrs = attrs; props.push(Root::Struct(item))
-			} else if input.parse::<syn::Token![ref]>().is_ok() {
-				props.push(Root::Item(item::parse(input, attrs, None, true)?))
-			} else { props.push(Root::Item(item::parse(input, attrs, Some(input.parse()?), true)?)) }
+			} else { props.push(Root::Item(item::parse(input, Some(attrs))?)) }
 		}
 		
 		Ok(Self(props))
@@ -40,7 +38,7 @@ impl syn::parse::Parse for Roots {
 pub(crate) fn expand(
 	items: &mut Vec<syn::ItemStruct>, Roots(roots): Roots
 ) -> syn::Result<(TokenStream, Bindings)> {
-	let (mut objects, mut builders, mut settings, mut bindings) = Default::default();
+	let (mut objects, mut constrs, mut settings, mut bindings) = Default::default();
 	let (mut final_struct, mut item_struct) = (false, None);
 	
 	macro_rules! check_struct {
@@ -64,21 +62,21 @@ pub(crate) fn expand(
 			} else { None };
 			
 			item::expand(
-				item, &mut objects, &mut builders, &mut settings, &mut bindings,
-				fields, Attributes::Some(&[]), Assignee::None, None
+				item, &mut objects, &mut constrs, &mut settings,
+				&mut bindings, fields, Attributes::Some(&[])
 			)?;
 		}
 	} }
 	
 	check_struct! { }
-	for builder in builders.into_iter().rev() { builder.extend_into(&mut objects) }
+	for constr in constrs.into_iter().rev() { constr.extend_into(&mut objects) }
 	objects.extend(settings); Ok((objects, bindings))
 }
 
 pub(crate) enum Visitor {
 	Error(syn::Error), Ok {
 		items: Vec<syn::ItemStruct>,
-		deque: std::collections::VecDeque<(crate::Spans, TokenStream, Bindings)>,
+		deque: std::collections::VecDeque<(Range, TokenStream, Bindings)>,
 	}
 }
 
@@ -89,19 +87,17 @@ macro_rules! item {
 			
 			if let syn::$item::Macro(mac) = node {
 				if mac.mac.path.is_ident("view") {
-					let spans = crate::Spans::Range(
+					let range = Range(
 						mac.mac.path.segments[0].ident.span(),
 						mac.mac.bang_token.span,
 					);
-					
 					if mac.mac.tokens.is_empty() {
-						return *self = Self::Error(spans.error("this view has no content"))
+						return *self = Self::Error(range.error("this view has no content"))
 					}
-					
 					return match mac.mac.parse_body().map(|root| expand(items, root)) {
 						Ok(expansion) => match expansion {
 							Ok((stream, bindings)) => {
-								deque.push_back((spans, stream, bindings));
+								deque.push_back((range, stream, bindings));
 								*node = syn::$item::Verbatim(TokenStream::new())
 							}
 							Err(error) => *self = Self::Error(error)
@@ -125,24 +121,26 @@ impl VisitMut for Visitor {
 const ERROR: &str = "views must be consumed with the `expand_view_here!` placeholder macro";
 
 pub(crate) fn parse(
-	    item: &mut syn::Item,
-	  output: &mut TokenStream,
-	   range: crate::Spans,
-	  stream: TokenStream,
-	bindings: Bindings
+	        item: &mut syn::Item,
+	      output: &mut TokenStream,
+	       range: Range,
+	mut   stream: TokenStream,
+	mut bindings: Bindings,
 ) -> syn::Result<()> {
-	let (placeholder, stream) = ("expand_view_here", Some(stream));
-	let mut visitor = crate::Visitor::Ok { placeholder, stream };
+	let mut visitor = crate::Visitor::Ok {
+		items: None, assignee: &mut None, placeholder: "expand_view_here", stream: &mut stream
+	};
 	visitor.visit_item_mut(item);
 	
-	if visitor.has_stream()? { Err(range.error(ERROR))? }
+	if !visitor.stream_is_empty()? { Err(range.error(ERROR))? }
 	
 	if !bindings.spans.is_empty() {
-		let stream = Some(bindings.stream);
-		let mut visitor = crate::Visitor::Ok { placeholder: "bindings", stream };
+		let mut visitor = crate::Visitor::Ok {
+			items: None, assignee: &mut None, placeholder: "bindings", stream: &mut bindings.stream
+		};
 		visitor.visit_item_mut(item);
 		
-		if visitor.has_stream()? { crate::bindings_error(output, bindings.spans) }
+		if !visitor.stream_is_empty()? { crate::bindings_error(output, bindings.spans) }
 	} Ok(())
 }
 
@@ -168,8 +166,6 @@ impl<'a> crate::Assignee<'a> {
 			
 			Self::Ident(assignee, ident) => Box::new(assignee.iter()
 				.flat_map(|assignee| assignee.iter()).chain(std::iter::once(*ident))),
-			
-			Self::None => unreachable!(),
 		}
 	}
 }
@@ -179,7 +175,6 @@ impl quote::ToTokens for crate::Assignee<'_> {
 		let (assignee, chain): (_, &dyn quote::ToTokens) = match self {
 			Self::Field(assignee, field) => (assignee, field),
 			Self::Ident(assignee, ident) => (assignee, ident),
-			Self::None => unreachable!(),
 		};
 		if let Some(assignee) = assignee {
 			assignee.to_tokens(tokens);
@@ -204,40 +199,23 @@ impl<T: AsRef<[syn::Attribute]>> Attributes<T> {
 	}
 }
 
-impl crate::Builder {
+impl crate::Construction {
 	pub fn extend_into(self, objects: &mut TokenStream) {
 		match self {
-			#[cfg(not(feature = "builder-mode"))]
-			Self::Builder(stream, _) => objects.extend(stream),
-			
-			#[cfg(feature = "builder-mode")]
-			Self::Builder { left, right, span, tilde } => {
+			Self::BuilderPattern { left, right, span, tilde } => {
 				objects.extend(left);
 				objects.extend(quote::quote_spanned! {
-					span => builder_mode!(#tilde #right)
+					span => construct!(#tilde #right)
 				})
 			}
-			#[cfg(not(feature = "builder-mode"))]
-			Self::Struct { ty, fields, call, span } => {
-				objects.extend(ty);
-				let mut fields = Group::new(Delimiter::Brace, fields);
-				fields.set_span(span);
-				objects.append(fields);
-				if let Some(call) = call { objects.extend(call) }
-			}
-			#[cfg(feature = "builder-mode")]
-			Self::Struct { left, mut ty, fields, span, tilde } => {
+			Self::StructLiteral { left, ty, fields, span, tilde } => {
 				objects.extend(left);
 				
 				let mut fields = Group::new(Delimiter::Brace, fields);
 				fields.set_span(span);
-				ty.append(fields);
-				
-				let mut value = Group::new(Delimiter::Parenthesis, ty);
-				value.set_span(span);
 				
 				objects.extend(quote::quote_spanned! {
-					span => builder_mode!(#tilde #value)
+					span => construct!(? #tilde #ty #fields)
 				})
 			}
 		}
@@ -290,42 +268,47 @@ impl quote::ToTokens for crate::Path {
 	}
 }
 
-impl crate::Spans {
-	pub fn error(self, message: impl std::fmt::Display) -> syn::Error {
-		match self {
-			Self::Single(span) => syn::Error::new(span, message),
-			Self::Range(start, end) => {
-				let mut a = Punct::new('<', Spacing::Alone); a.set_span(start);
-				let mut b = Punct::new('>', Spacing::Alone); b.set_span(end);
-				syn::Error::new_spanned(quote::quote![#a #b], message)
-			}
-		}
+impl Range {
+	pub fn error(self, message: &str) -> syn::Error {
+		let a = syn::Ident::new("a", self.0);
+		let b = syn::Ident::new("b", self.1);
+		syn::Error::new_spanned(quote::quote![#a #b], message)
 	}
 }
 
-impl crate::Visitor {
-	pub fn has_stream(self) -> syn::Result<bool> {
+impl crate::Visitor<'_, '_> {
+	pub fn stream_is_empty(self) -> syn::Result<bool> {
 		match self {
-			crate::Visitor::Ok { stream, .. } => Ok(stream.is_some()),
-			crate::Visitor::Error(error) => Err(error),
+			Self::Ok { stream, .. } => Ok(stream.is_empty()),
+			Self::Error(error) => Err(error),
 		}
 	}
 	fn make_error(&mut self, mac: &syn::Macro) {
-		*self = Self::Error(crate::Spans::Range(
-			mac.path.get_ident().unwrap().span(), mac.bang_token.span,
-		).error("this placeholder must have no content"))
+		let range = Range(mac.path.get_ident().unwrap().span(), mac.bang_token.span);
+		*self = Self::Error(range.error("this placeholder must have no content"));
 	}
 }
 
-impl VisitMut for crate::Visitor {
+impl VisitMut for crate::Visitor<'_, '_> {
 	fn visit_expr_mut(&mut self, node: &mut syn::Expr) {
-		let crate::Visitor::Ok { placeholder, stream } = self else { return };
-		if stream.is_none() { return }
+		let Self::Ok { items, assignee, placeholder, stream } = self else { return };
+		
+		if stream.is_empty() && items.is_none() { return }
+		
+		if let (Some(items), syn::Expr::Infer(syn::ExprInfer { underscore_token, .. })) = (items, &node) {
+			let Some(item) = items.next().or_else(|| assignee.take()) else {
+				return *self = Self::Error(syn::Error::new(
+					underscore_token.span, "not enough items for as many placeholders as this one"
+				))
+			};
+			let assignee = item.spanned_to(underscore_token.span);
+			return *node = syn::Expr::Verbatim(quote_spanned!(underscore_token.span => #(#assignee).*))
+		}
 		
 		if let syn::Expr::Macro(mac) = node {
-			if mac.mac.path.is_ident(placeholder) {
+			if !stream.is_empty() && mac.mac.path.is_ident(placeholder) {
 				if !mac.mac.tokens.is_empty() { return self.make_error(&mac.mac) }
-				let group = Group::new(Delimiter::Brace, stream.take().unwrap());
+				let group = Group::new(Delimiter::Brace, std::mem::take(stream));
 				let mut stream = TokenStream::new(); stream.append(group);
 				return *node = syn::Expr::Verbatim(stream)
 			}
@@ -334,14 +317,14 @@ impl VisitMut for crate::Visitor {
 	}
 	
 	fn visit_stmt_mut(&mut self, node: &mut syn::Stmt) {
-		let crate::Visitor::Ok { placeholder, stream } = self else { return };
-		if stream.is_none() { return }
+		let Self::Ok { items: _, assignee: _, placeholder, stream } = self else { return };
+		if stream.is_empty() { return }
 		
 		if let syn::Stmt::Macro(mac) = node {
 			if mac.mac.path.is_ident(placeholder) {
 				if !mac.mac.tokens.is_empty() { return self.make_error(&mac.mac) }
 				return *node = syn::Stmt::Expr(
-					syn::Expr::Verbatim(stream.take().unwrap()), None
+					syn::Expr::Verbatim(std::mem::take(stream)), None
 				)
 			}
 		}

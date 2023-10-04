@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use declarative::{builder_mode, clone, view};
+use declarative::{clone, construct, view};
 use gtk::{glib, prelude::*};
 use std::{cell::{OnceCell, Ref, RefCell, RefMut}, rc::Rc};
 
@@ -27,6 +27,7 @@ impl<R> View<R> {
 		
 		// if there are unconsumed bindings in the view, they can be consumed outside:
 		let refresh = { clone![window]; move |state: Ref<State>| bindings!() };
+		// for multiple views with unconsumed bindings, `bindings!()` would consume in FIFO order
 		
 		refresh(view.state.borrow()); // initial refresh
 		
@@ -36,10 +37,8 @@ impl<R> View<R> {
 	}
 	
 	fn update(&self, update_state: fn(RefMut<State>))
-	// view does not mutate `state` while refreshing, and so `Ref<State>`:
-	where R: Fn(Ref<State>) {
-		// the state is mutated from the view itself:
-		update_state(self.state.borrow_mut());
+	where R: Fn(Ref<State>) { // view does not mutate `state` while refreshing, and so `Ref<State>`
+		update_state(self.state.borrow_mut()); // the state is mutated from the view itself
 		
 		// some application logic here
 		
@@ -47,47 +46,42 @@ impl<R> View<R> {
 		self.refresh.get().unwrap() (self.state.borrow())
 	}
 	
-	view! {
-		gtk::ApplicationWindow window !{
-			application: app
+	view![ gtk::ApplicationWindow window {
+		application: app
+		titlebar: &gtk::HeaderBar::new()
+		
+		'bind match state.count % 2 == 0 {
+			true  => set_title: Some("The value is even")
+			false => set_title: Some("The value is odd")
+		}
+		
+		child: &_ @ gtk::Grid {
+			column_spacing: 6
+			row_spacing: 6
+			margin_top: 6
+			margin_bottom: 6
+			margin_start: 6
+			~margin_end: 6
 			
-			gtk::HeaderBar #titlebar(&#) { }
-			
-			'bind match state.count % 2 == 0 {
-				true  => set_title: Some("The value is even")
-				false => set_title: Some("The value is odd")
+			attach: &_, 0, 0, 2, 1 @ gtk::Label my_label {
+				hexpand: true
+				'bind set_label: &format!("The count is: {}", state.count)
 			}
-			
-			gtk::Grid #child(&#) !{
-				column_spacing: 6
-				row_spacing: 6
-				margin_top: 6
-				margin_bottom: 6
-				margin_start: 6
-				~margin_end: 6
-				
-				gtk::Label my_label #attach(&#, 0, 0, 2, 1) !{
-					hexpand: true
-					'bind set_label: &format!("The count is: {}", state.count)
-				}
-				
-				gtk::Button::with_label("Increase") #attach(&#, 0, 1, 1, 1) {
-					// now instead of sending messages we have to do:
-					connect_clicked: clone![view; move |_| view.update(
-						|mut state| state.count = state.count.wrapping_add(1)
-					)]
-				}
-				
-				gtk::Button::with_label("Decrease") #attach(&#, 1, 1, 1, 1) {
-					// clone `view` again to move the clone to the closure
-					// so we can give the closure `refresh` to `view`
-					connect_clicked: clone![view; move |_| view.update(
-						|mut state| state.count = state.count.wrapping_sub(1)
-					)]
-				}
+			attach: &_, 0, 1, 1, 1 @ gtk::Button::with_label("Increase") {
+				// now instead of sending messages we have to do:
+				connect_clicked: clone![view; move |_| view.update(
+					|mut state| state.count = state.count.wrapping_add(1)
+				)]
+			}
+			attach: &_, 1, 1, 1, 1 @ gtk::Button::with_label("Decrease") {
+				// clone `view` again to move the clone to the closure
+				// so we can give the closure `refresh` to `view`
+				connect_clicked: clone![view; move |_| view.update(
+					|mut state| state.count = state.count.wrapping_sub(1)
+				)]
 			}
 		}
-	}
+	} ];
 }
 
 fn main() -> glib::ExitCode {

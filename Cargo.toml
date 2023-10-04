@@ -7,12 +7,12 @@ workspace.members = ['macros']
 [workspace.package]
 authors     = ['Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>']
 categories  = ['gui']
-description = 'QML-inspired declarative syntax for easy view code manipulation'
+description = 'Generic DSL macros for easy view code manipulation'
 edition     = '2021'
 keywords    = ['GUI', 'macro', 'reactive', 'view']
 license     = 'Apache-2.0 OR MIT'
 repository  = 'https://github.com/ejaa3/declarative/'
-version     = '0.5.3'
+version     = '0.6.0'
 
 [package]
 include     = ['/LICENSES', '/src', 'Cargo.toml', 'README.md']
@@ -27,14 +27,10 @@ repository  = { workspace = true }
 version     = { workspace = true }
 
 [dependencies]
-declarative = { package = 'declarative-macros', version = '0.5.3', path = 'macros' }
-
-[features]
-builder-mode = ['declarative/builder-mode']
-gtk-rs = ['builder-mode']
+declarative = { package = 'declarative-macros', version = '0.6.0', path = 'macros' }
 
 [dev-dependencies.gtk]
 default-features = false
 features = ['v4_6']
 package = 'gtk4'
-version = '0.6'
+version = '0.7'

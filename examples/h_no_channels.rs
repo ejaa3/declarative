@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use declarative::{builder_mode, clone, view};
+use declarative::{clone, construct, view};
 use gtk::{glib, prelude::*};
 use std::{cell::{OnceCell, RefCell, RefMut}, rc::Rc};
 
@@ -13,7 +13,7 @@ use std::{cell::{OnceCell, RefCell, RefMut}, rc::Rc};
 
 // P and R are for the closures that refresh the parent
 // component of this one, and this component respectively:
-struct Child<P = (), R = ()> { // generic default types are unnecessary
+struct Child <P = (), R = ()> { // generic default types are unnecessary
 	count: RefCell<u8>, // a mutable state for the child
 	  nth: &'static str, // the child number (first or second)
 	
@@ -25,11 +25,10 @@ struct Child<P = (), R = ()> { // generic default types are unnecessary
 	data: OnceCell<(gtk::Box, R)>,
 }
 
-#[view]
-// since by default the generics are `()`, we can associate a `new()` function conveniently:
-impl Child<(), ()> { // now we don't have to specify P and R in `Child::<P, R>::new()`
+#[view]      // since by default the generics are `()`, we don't have
+impl Child { // to specify P and R here and in `Child::<P, R>::new()`
 	fn new(nth: &'static str,
-	    parent: Rc<Parent<impl Fn(&str) + 'static>>, // now we must always specify the trait that...
+	    parent: Rc<Parent<impl Fn(&str) + 'static>> // now we must always specify the trait that...
 	) -> Rc<Child<impl Fn(&str), impl Fn(u8)>> { // implements the closure that refreshes the parent
 		let this = Rc::new(Child {
 			nth, parent, count: RefCell::new(0), data: OnceCell::new()
@@ -42,33 +41,29 @@ impl Child<(), ()> { // now we don't have to specify P and R in `Child::<P, R>::
 		this
 	} // of course this could be an unassociated function
 	
-	view! {
-		gtk::Box root !{
-			orientation: gtk::Orientation::Vertical
-			~spacing: 6
-			
-			gtk::Label #append(&#) !{
-				label: &format!("This is the {nth} child")
-				'bind set_label: &format!("The {nth} count is: {count}") // we just used `nth` in this binding
-				// this means that the binding closure got a reference to it
-			}
-			
-			gtk::Button::with_label("Increase") #append(&#) {
-				// now instead of sending two messages, we call two methods:
-				connect_clicked: clone![this; move |_| {
-					this.update(|mut count| *count = count.wrapping_add(1));
-					this.parent.notify_child_update(nth);
-				}]
-			}
-			
-			gtk::Button::with_label("Decrease") #append(&#) {
-				connect_clicked: clone![this; move |_| {
-					this.update(|mut count| *count = count.wrapping_sub(1));
-					this.parent.notify_child_update(nth);
-				}]
-			}
+	view![ gtk::Box root {
+		orientation: gtk::Orientation::Vertical
+		~spacing: 6
+		
+		append: &_ @ gtk::Label {
+			label: &format!("This is the {nth} child")
+			'bind set_label: &format!("The {nth} count is: {count}")
+			// the binding closure got a reference to `nth` due to the previous binding
 		}
-	}
+		append: &_ @ gtk::Button::with_label("Increase") {
+			// now instead of sending two messages, we call two methods:
+			connect_clicked: clone![this; move |_| {
+				this.update(|mut count| *count = count.wrapping_add(1));
+				this.parent.notify_child_update(nth);
+			}]
+		}
+		append: &_ @ gtk::Button::with_label("Decrease") {
+			connect_clicked: clone![this; move |_| {
+				this.update(|mut count| *count = count.wrapping_sub(1));
+				this.parent.notify_child_update(nth);
+			}]
+		}
+	} ];
 }
 
 // https://doc.rust-lang.org/rust-by-example/fn/closures/anonymity.html
@@ -108,44 +103,36 @@ impl<R> Parent<R> {
 		self.refresh.get().unwrap() (nth)
 	}
 	
-	view! {
-		gtk::ApplicationWindow window !{
-			application: app
-			title: "Components"
+	view![ gtk::ApplicationWindow window {
+		application: app
+		title: "Components"
+		titlebar: &gtk::HeaderBar::new()
+		
+		child: &_ @ gtk::Box {
+			orientation: gtk::Orientation::Vertical
+			spacing: 6
+			margin_top: 6
+			margin_bottom: 6
+			margin_start: 6
+			~margin_end: 6
 			
-			gtk::HeaderBar #titlebar(&#) { }
+			append: &first_child.data.get().unwrap().0
 			
-			gtk::Box #child(&#) !{
-				orientation: gtk::Orientation::Vertical
-				spacing: 6
-				margin_top: 6
-				margin_bottom: 6
-				margin_start: 6
-				~margin_end: 6
-				
-				// interpolation is a bit more verbose:
-				ref first_child { #append(&#.data.get().unwrap().0) }
-				
-				Child::new("Second", this.clone()) second_child {
-					// verbose interpolations should be in scope:
-					#append(&#.data.get().unwrap().0)
-				}
-				
-				gtk::Label #append(&#) !{
-					label: "Waiting for message…"
-					'bind set_label: &format!("{nth} child updated")
-				}
-				
-				gtk::Button::with_label("Reset first child") #append(&#) {
-					connect_clicked: move |_| first_child.reset();
-				}
-				
-				gtk::Button::with_label("Reset second child") #append(&#) {
-					connect_clicked: move |_| second_child.reset();
-				}
+			append: &_.data.get().unwrap().0 @
+				Child::new("Second", this.clone()) second_child { }
+			
+			append: &_ @ gtk::Label {
+				label: "Waiting for message…"
+				'bind set_label: &format!("{nth} child updated")
+			}
+			append: &_ @ gtk::Button::with_label("Reset first child") {
+				connect_clicked: move |_| first_child.reset();
+			}
+			append: &_ @ gtk::Button::with_label("Reset second child") {
+				connect_clicked: move |_| second_child.reset();
 			}
 		}
-	}
+	} ];
 }
 
 fn main() -> glib::ExitCode {

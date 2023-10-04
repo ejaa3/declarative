@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use declarative::{builder_mode, clone, view}; // we need to clone (see its doc)
+use declarative::{clone, construct, view}; // we need to clone (see its doc)
 use gtk::{glib, prelude::*};
 
 // let's try to create a reactive view using channels
@@ -30,7 +30,7 @@ impl State {
 		let mut state = Self { count: 0 }; // we create the state
 		
 		// about the following: https://docs.gtk.org/glib/struct.MainContext.html
-		let (tx, rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
+		let (tx, rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
 		// looks like https://doc.rust-lang.org/book/ch16-02-message-passing.html
 		
 		expand_view_here! { } // here a closure named `refresh` was created
@@ -38,57 +38,50 @@ impl State {
 		rx.attach(None, move |msg| { // `state` and `refresh` lives in this closure
 			state.update(msg); // we update the state
 			refresh(&state); // and now we refresh the view
-			glib::Continue(true) // this is for glib to keep this closure alive
+			glib::ControlFlow::Continue // this is for glib to keep this closure alive
 		});
 		
 		window.present()
 	}
 	
-	view! {
-		gtk::ApplicationWindow window !{
-			application: app
-			title: "Count unchanged"
+	view![ gtk::ApplicationWindow window {
+		application: app
+		title: "Count unchanged"
+		titlebar: &gtk::HeaderBar::new()
+		
+		'bind match state.count % 2 == 0 {
+			true  => set_title: Some("The value is even")
+			false => set_title: Some("The value is odd")
+		}
+		
+		child: &_ @ gtk::Grid {
+			column_spacing: 6
+			row_spacing: 6
+			margin_top: 6
+			margin_bottom: 6
+			margin_start: 6
+			~margin_end: 6
 			
-			'bind match state.count % 2 == 0 {
-				true  => set_title: Some("The value is even")
-				false => set_title: Some("The value is odd")
+			attach: &_, 0, 0, 2, 1 @ gtk::Label {
+				hexpand: true
+				'bind #set_label: &format!("The count is: {}", state.count)
 			}
-			
-			gtk::HeaderBar #titlebar(&#) { }
-			
-			gtk::Grid #child(&#) !{
-				column_spacing: 6
-				row_spacing: 6
-				margin_top: 6
-				margin_bottom: 6
-				margin_start: 6
-				~margin_end: 6
-				
-				gtk::Label #attach(&#, 0, 0, 2, 1) {
-					set_hexpand: true
-					'bind @set_label: &format!("The count is: {}", state.count)
-				}
-				
-				gtk::Button::with_label("Increase") #attach(&#, 0, 1, 1, 1) {
-					// we clone `tx` to be able to use it with the other button:
-					connect_clicked: clone![tx; move |_| send!(Msg::Increase => tx)]
-					// you can see that `clone![]` allows you to put the expression
-					// to be assigned (in this case a closure) after the semicolon
-				}
-				
-				gtk::Button::with_label("Decrease") #attach(&#, 1, 1, 1, 1) {
-					connect_clicked: move |_| send!(Msg::Decrease => tx)
-				}
+			attach: &_, 0, 1, 1, 1 @ gtk::Button::with_label("Increase") {
+				// we clone `tx` to be able to use it with the other button:
+				connect_clicked: clone![tx; move |_| send!(Msg::Increase => tx)]
+				// you can see that `clone![]` allows you to put the expression
+				// to be assigned (in this case a closure) after the semicolon
 			}
-			
-			// the following closure requires `window` because of the 'bind above:
-			@refresh = {
-				// we clone `window` to move the clone to the closure and thus be able to present it:
-				clone![window]; move |state: &Self| bindings!()
-				// this time the closure is outside of `clone!` so that `bindings!` can be expanded
+			attach: &_, 1, 1, 1, 1 @ gtk::Button::with_label("Decrease") {
+				connect_clicked: move |_| send!(Msg::Decrease => tx)
 			}
 		}
-	}
+		'consume refresh = { // this closure requires `window` because of the 'bind above
+			// we clone `window` to move the clone to the closure and thus be able to present it:
+			clone![window]; move |state: &Self| bindings!()
+			// this time the closure is outside of `clone!` so that `bindings!` can be expanded
+		}
+	} ];
 }
 
 fn main() -> glib::ExitCode {

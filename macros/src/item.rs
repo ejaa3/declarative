@@ -4,205 +4,166 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-use proc_macro2::{Delimiter, Group, Punct, Spacing, Span, TokenStream};
+use proc_macro2::{Group, Punct, Spacing, Span, TokenStream};
 use quote::{TokenStreamExt, quote, quote_spanned};
 use syn::punctuated::Punctuated;
-use crate::{content, property, Assignee, Builder, Mode};
+use crate::{content, Assignee, Attributes, Construction};
 
-enum Object { Path (Box<Path>), Ref (Punctuated<syn::Ident, syn::Token![.]>) }
+struct Field {
+	 vis: Option<syn::Visibility>,
+	mut_: Option<syn::Token![mut]>,
+	name: syn::Ident,
+	  ty: Option<Box<syn::TypePath>>,
+	auto: bool,
+}
 
-struct Path { path: crate::Path, group: Option<Group>, field: crate::Field }
+fn parse_field(display: Option<&dyn std::fmt::Display>, input: syn::parse::ParseStream) -> syn::Result<Field> {
+	let vis = input.parse()?;
+	let vis = if let syn::Visibility::Inherited = vis {
+		input.parse::<syn::Token![ref]>().map(|_| vis).ok()
+	} else { Some(vis) };
+	
+	let (mut_, name) = (input.parse()?, input.parse());
+	let ty = (vis.is_some() && input.parse::<syn::Token![as]>().is_ok()).then(|| input.parse()).transpose()?;
+	
+	struct Name<'a>(Option<&'a syn::TypePath>);
+	
+	impl std::fmt::Display for Name<'_> {
+		fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+			if let Some(ty) = self.0 { crate::view::display_ty(ty, f) } else { write!(f, "back_") }
+		}
+	}
+	
+	thread_local![static COUNT: std::cell::RefCell<usize> = std::cell::RefCell::new(0)];
+	
+	let (name, auto) = if vis.is_some() { (name?, false) } else {
+		name.map(|name| (name, false)).unwrap_or_else(|_| (syn::Ident::new(&COUNT.with(|cell| {
+			let count = *cell.borrow();
+			*cell.borrow_mut() = count.wrapping_add(1);
+			compact_str::format_compact!("{}{count}", display.unwrap_or(&Name(ty.as_deref())))
+		}), Span::call_site()), true))
+	};
+	
+	Ok(Field { vis, mut_, name, ty, auto })
+}
 
-fn as_assignee(object: &Object) -> Assignee {
-	match object {
-		Object::Path(path) => Assignee::Ident(None, &path.field.name),
-		Object::Ref(ref_) => Assignee::Field(None, ref_),
+struct Path { path: crate::Path, group: Option<Group>, pub field: Field }
+
+enum Object { Path(Box<Path>), Ref(Punctuated<syn::Ident, syn::Token![.]>) }
+
+pub enum Mode { Builder(Span), Normal(Span), StructLiteral(syn::Token![?]) }
+
+pub(crate) struct Item {
+	  attrs: Option<Vec<syn::Attribute>>,
+	at_span: Span,
+	 object: Object,
+	   mode: Mode,
+	   body: Vec<content::Content>,
+}
+
+impl Item {
+	pub fn set_attrs(&mut self, attrs: Vec<syn::Attribute>) { self.attrs = Some(attrs) }
+	pub fn as_assignee(&self) -> Assignee {
+		match &self.object {
+			Object::Ref (ref_) => Assignee::Field(None, ref_),
+			Object::Path(path) => Assignee::Ident(None, &path.field.name),
+		}
 	}
 }
 
-struct Inter {
-	 inter: crate::Path,
-	by_ref: Option<syn::Token![&]>,
-	  mut_: Option<syn::Token![mut]>,
-	  mode: Mode,
-	tokens: TokenStream,
-	  back: Option<Box<property::Back>>,
-}
-
-fn parse_inter(
-	input: syn::parse::ParseStream, assignee: Assignee, span: &mut Span
-) -> syn::Result<Option<Inter>> {
-	let Ok(pound) = input.parse::<syn::Token![#]>() else { return Ok(None) };
-	*span = pound.span;
+pub(crate) fn parse(input: syn::parse::ParseStream, attrs: Option<Vec<syn::Attribute>>) -> syn::Result<Item> {
+	let at_span = if attrs.is_none() { input.parse::<syn::Token![@]>()?.span } else { Span::call_site() };
+	let path = input.parse::<syn::Token![ref]>().is_err().then(|| input.parse()).transpose()?;
 	
-	let inter: crate::Path = input.parse()?;
-	let buffer;
-	
-	let (by_ref, mut_) = if inter.is_long() {
-		(input.parse()?, input.parse()?)
-	} else { (None, None) };
-	
-	let mode = if input.peek(syn::token::Paren) {
-		Mode::Method(syn::parenthesized!(buffer in input).span.join())
-	} else if input.peek(syn::token::Brace) {
-		Mode::Field(syn::braced!(buffer in input).span.join())
-	} else {
-		Mode::FnField(syn::bracketed!(buffer in input).span.join())
-	};
-	
-	let tokens = buffer.step(|cursor| {
-		let mut rest = *cursor;
-		let mut stream = TokenStream::new();
-		
-		crate::find_pound(&mut rest, &mut stream, assignee)
-			.then(|| (stream, syn::buffer::Cursor::empty()))
-			.ok_or_else(|| cursor.error("no single `#` found around here"))
-	})?;
-	
-	let back = if let Mode::Field(_) = &mode { None } else { property::parse_back(input)? };
-	Ok(Some(Inter { inter, by_ref, mut_, mode, tokens, back }))
-}
-
-pub struct Item {
-	 attrs: Vec<syn::Attribute>,
-	object: Object,
-	 spans: [Span; 4], // start, end, pound, braces
-	 inter: Option<Inter>,
-	  mode: ItemMode,
-	  body: Vec<content::Content>,
-}
-
-pub enum ItemMode { Builder(syn::Token![!]), Struct(syn::Token![~]), Normal }
-
-pub(crate) fn parse(
-	input: syn::parse::ParseStream,
-	attrs: Vec<syn::Attribute>,
-	 path: Option<crate::Path>,
-	 root: bool,
-) -> syn::Result<Item> {
-	let mut spans = [Span::call_site(); 4]; spans[0] = input.span();
-	
-	let (tildable, mut object) = if let Some(path) = path {
+	let (literable, mut object) = if let Some(path) = path {
 		let group = input.peek(syn::token::Paren).then(|| input.parse()).transpose()?;
-		let field = crate::parse_field(Some(&path), input)?;
+		let field = parse_field(Some(&path), input)?;
 		(group.is_none(), Object::Path(Box::new(Path { path, group, field })))
 	} else { (false, Object::Ref(crate::parse_unterminated(input)?)) };
 	
-	let mut inter = if root { None } else {
-		spans[1] = input.span();
-		parse_inter(input, as_assignee(&object), &mut spans[2])?
-	};
+	let braces;
+	let brace = syn::braced!(braces in input);
+	let span = brace.span.join();
+	
+	if let Object::Path(path) = &mut object {
+		if path.field.auto { path.field.name.set_span(span) }
+	}
 	
 	let mut body = vec![];
-	let has_body = inter.as_ref().map(|inter| inter.back.is_none()).unwrap_or(true);
-	let mode = if has_body {
-		if let (true, Ok(tilde)) = (tildable, input.parse::<syn::Token![~]>()) {
-			ItemMode::Struct(tilde)
-		} else if let Ok(pound) = input.parse::<syn::Token![!]>() {
-			ItemMode::Builder(pound)
-		} else { ItemMode::Normal }
-	} else { ItemMode::Normal };
+	while !braces.is_empty() { body.push(braces.parse()?) }
 	
-	if root | has_body {
-		let braces;
-		let brace = syn::braced!(braces in input);
-		spans[3] = brace.span.join();
-		
-		if let Object::Path(path) = &mut object {
-			if path.field.auto { path.field.name.set_span(spans[3]) }
-		}
-		
-		if root {
-			while !braces.is_empty() { body.push(braces.parse()?) }
-		} else {
-			while !braces.is_empty() {
-				if inter.is_some() {
-					while !braces.is_empty() { body.push(braces.parse()?) }
-				} else if braces.peek(syn::Token![#]) && (
-					braces.peek2(syn::Ident) || braces.peek2(syn::Token![<])
-				) {
-					inter = parse_inter(&braces, as_assignee(&object), &mut spans[2])?;
-				} else { body.push(braces.parse()?) }
-			}
-		}
-	}
-	Ok(Item { attrs, object, spans, inter, mode, body })
+	let mode = if let Some(Ok(tilde)) = literable.then(|| input.parse::<syn::Token![?]>()) {
+		Mode::StructLiteral(tilde)
+	} else if let Ok(pound) = input.parse::<syn::Token![!]>() {
+		if let Object::Path(ref path) = object {
+			if path.group.is_some() { Mode::Builder(pound.span) }
+			else { Mode::Normal(pound.span) }
+		} else { Mode::Normal(pound.span) }
+	} else if let Object::Path(ref path) = object {
+		if path.group.is_some() { Mode::Normal(span) }
+		else { Mode::Builder(span) }
+	} else { Mode::Builder(span) };
+	
+	Ok(Item { attrs, at_span, object, mode, body })
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn expand(
-	Item { mut attrs, object, spans, inter, mode, body }: Item,
+	Item { attrs, at_span, object, mode, body }: Item,
 	 objects: &mut TokenStream,
-	builders: &mut Vec<Builder>,
+	 constrs: &mut Vec<Construction>,
 	settings: &mut TokenStream,
 	bindings: &mut crate::Bindings,
 	  fields: &mut Option<&mut Punctuated<syn::Field, syn::Token![,]>>,
 	  pattrs: crate::Attributes<&[syn::Attribute]>,
-	assignee: Assignee,
-	 builder: Option<usize>,
 ) -> syn::Result<()> {
-	let let_ = syn::Ident::new("let", spans[2]);
+	let mut attrs = attrs.unwrap();
 	crate::extend_attributes(&mut attrs, pattrs.get(fields));
+	
+	let let_ = syn::Ident::new("let", at_span);
 	let (attributes, assignee_field, assignee_ident);
 	
-	let (new_assignee, new_builder) = match object {
+	let (new_assignee, new_constr) = match object {
 		Object::Path(path) => {
 			let Path { path, group, field } = *path;
-			let crate::Field { vis, mut_, name, colon, ty, auto: _ } = field;
+			let Field { vis, mut_, name, ty, auto: _ } = field;
 			
-			let stream = || {
-				let group = group.as_ref().map(|group| quote![#group])
-					.unwrap_or_else(|| quote_spanned![spans[3] => ::default()]);
-				
-				quote![#(#attrs)* #let_ #mut_ #name = #path #group]
-			};
-			
-			let builder = match mode {
-				ItemMode::Builder(not) => {
-					#[cfg(not(feature = "builder-mode"))]
-					builders.push(Builder::Builder(stream(), not.span));
-					
-					#[cfg(feature = "builder-mode")]
-					builders.push(Builder::Builder {
+			let constr = match mode {
+				Mode::Builder(span) => {
+					constrs.push(Construction::BuilderPattern {
 						 left: quote![#(#attrs)* #let_ #mut_ #name =],
 						right: group.as_ref().map(|group| quote![#path #group])
-							.unwrap_or_else(|| quote_spanned![not.span => #path =>]),
-						 span: not.span,
+							.unwrap_or_else(|| quote_spanned![span => #path =>]),
+						 span,
 						tilde: None,
 					});
 					
-					Some(builders.len() - 1)
+					Some(constrs.len() - 1)
 				}
-				ItemMode::Struct(tilde) => {
-					#[cfg(not(feature = "builder-mode"))]
-					builders.push(Builder::Struct {
-						    ty: quote![#(#attrs)* #let_ #mut_ #name = #path],
-						fields: Default::default(),
-						  call: None,
-						  span: tilde.span,
-					});
-					
-					#[cfg(feature = "builder-mode")]
-					builders.push(Builder::Struct {
+				Mode::StructLiteral(question) => {
+					constrs.push(Construction::StructLiteral {
 						  left: quote![#(#attrs)* #let_ #mut_ #name =],
 						    ty: quote![#path],
 						fields: Default::default(),
-						  span: tilde.span,
+						  span: question.span,
 						 tilde: None,
 					});
 					
-					Some(builders.len() - 1)
+					Some(constrs.len() - 1)
 				}
-				ItemMode::Normal => {
-					objects.extend(stream());
+				Mode::Normal(span) => {
+					objects.extend(match &group {
+						None => quote_spanned![span => #(#attrs)* #let_ #mut_ #name = construct!(? #path)],
+						Some(group) => quote![#(#attrs)* #let_ #mut_ #name = #path #group]
+					});
 					objects.append(Punct::new(';', Spacing::Alone));
 					None
 				}
 			};
 			
-			if let Some(colon) = colon {
+			if let Some(vis) = vis {
 				let fields = fields.as_deref_mut().ok_or_else(
-					|| syn::Error::new_spanned(quote![#vis #colon #ty], crate::NO_FIELD)
+					|| syn::Error::new_spanned(quote![#vis #ty], NO_FIELD_ERROR)
 				)?;
 				
 				let ty = 'ty: {
@@ -219,7 +180,7 @@ pub(crate) fn expand(
 						path => path
 					};
 					
-					Err(syn::Error::new_spanned(quote![#path #group], crate::NO_TYPE))?
+					Err(syn::Error::new_spanned(quote![#path #group], NO_TYPE_ERROR))?
 				};
 				
 				attributes = crate::Attributes::None(fields.len());
@@ -228,12 +189,12 @@ pub(crate) fn expand(
 					attrs, vis, ty: syn::Type::Path(ty),
 					    mutability: syn::FieldMutability::None,
 					         ident: Some(name.clone()),
-					   colon_token: Some(colon),
+					   colon_token: None,
 				});
 			} else { attributes = crate::Attributes::Some(attrs) }
 			
 			assignee_ident = name;
-			(Assignee::Ident(None, &assignee_ident), builder)
+			(Assignee::Ident(None, &assignee_ident), constr)
 		}
 		Object::Ref(idents) => {
 			settings.extend(quote![#(#attrs)* #let_ _ = #idents;]);
@@ -244,87 +205,113 @@ pub(crate) fn expand(
 	};
 	
 	for content in body { content::expand(
-		content, objects, builders, settings, bindings, fields,
-		attributes.as_slice(), new_assignee, new_builder
+		content, objects, constrs, settings, bindings, fields,
+		attributes.as_slice(), new_assignee, new_constr
 	)? }
 	
-	if let Assignee::None = assignee { return Ok(()) }
+	Ok(())
+}
+
+pub struct Back {
+	pub token: syn::Lifetime,
+	    field: Field,
+	     body: Vec<content::Content>,
+	    build: Option<Span>,
+}
+
+pub fn parse_back(input: syn::parse::ParseStream) -> syn::Result<Option<Box<Back>>> {
+	let token = if input.fork().parse::<syn::Lifetime>()
+		.map(|keyword| keyword.ident == "back").unwrap_or(false) {
+			input.parse::<syn::Lifetime>()?
+		} else { return Ok(None) };
 	
-	let Some(Inter { inter, by_ref, mut_, mode, tokens, back }) = inter else {
-		Err(crate::Spans::Range(spans[0], spans[1]).error("missing #interpolation"))?
-	};
+	let mut field = parse_field(None, input)?;
+	let braces;
+	let brace = syn::braced!(braces in input);
+	let build = input.parse::<syn::Token![!]>().err().map(|_| brace.span.join());
 	
-	let attrs = attributes.get(fields);
-	use property::check;
+	if field.auto { field.name.set_span(brace.span.join()) }
 	
-	match builder.map(|index| &mut builders[index]) {
-		#[cfg(not(feature = "builder-mode"))]
-		Some(Builder::Builder(stream, span)) => return {
-			let paren = check(Some(attrs), &inter, mode, true, back)?;
-			let mut group = Group::new(Delimiter::Parenthesis, tokens); group.set_span(paren);
-			Ok(stream.extend(quote_spanned![*span => .#inter #group]))
-		},
-		#[cfg(feature = "builder-mode")]
-		Some(Builder::Builder { right, span, .. }) => return {
-			let paren = check(Some(attrs), &inter, mode, true, back)?;
-			let mut group = Group::new(Delimiter::Parenthesis, tokens); group.set_span(paren);
-			Ok(right.extend(quote_spanned![*span => .#inter #group]))
-		},
-		#[cfg(not(feature = "builder-mode"))]
-		Some(Builder::Struct { ty: _, fields, call, span }) => return {
-			let paren = check(call.is_some().then_some(attrs), &inter, mode, true, back)?;
-			let Some(call) = call else { return Ok(fields.extend(quote![#inter: #tokens,])) };
-			let mut group = Group::new(Delimiter::Parenthesis, tokens); group.set_span(paren);
-			Ok(call.extend(quote_spanned![*span => .#inter #group]))
-		},
-		#[cfg(feature = "builder-mode")]
-		Some(Builder::Struct { fields, span, .. }) => return {
-			check(None, &inter, mode, true, back)?;
-			Ok(fields.extend(quote_spanned![*span => #inter: #tokens,]))
-		},
-		None => ()
+	let mut body = vec![];
+	while !braces.is_empty() { body.push(braces.parse()?) }
+	
+	Ok(Some(Box::new(Back { token, field, body, build })))
+}
+
+fn builds(content: Option<&content::Content>) -> bool {
+	content.map(|content| match content {
+		| content::Content::Bind(_)
+		| content::Content::BindColon(_)
+		| content::Content::Edit(_)
+		| content::Content::If(_)
+		| content::Content::Match(_) => false,
+		
+		| content::Content::Consume(_)
+		| content::Content::Property(_) => true,
+		
+		| content::Content::Construct(built) => built.rest.is_empty()
+	}).unwrap_or(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn expand_back(
+	Back { token, field, body, build }: Back,
+	 objects: &mut TokenStream,
+	 constrs: &mut Vec<Construction>,
+	settings: &mut TokenStream,
+	bindings: &mut crate::Bindings,
+	  fields: &mut Option<&mut Punctuated<syn::Field, syn::Token![,]>>,
+	   attrs: Attributes<Vec<syn::Attribute>>,
+	   right: TokenStream,
+) -> syn::Result<()> {
+	let pattrs = attrs.get(fields);
+	let let_ = syn::Ident::new("let", token.span());
+	let Field { vis, mut_, name, ty, auto } = field;
+	
+	let left = if auto && build.is_some() && builds(body.first()) && builds(body.last())
+		{ quote![#(#pattrs)*] } else { quote![#(#pattrs)* #let_ #mut_ #name =] };
+	
+	let index = if let Some(span) = build {
+		constrs.push(Construction::BuilderPattern { left, right, span, tilde: None });
+		Some(constrs.len() - 1)
+	} else { settings.extend(quote![#left #right;]); None };
+	
+	let mut setup = TokenStream::new();
+	
+	for content in body { content::expand(
+		content, objects, constrs, &mut setup, bindings,
+		fields, attrs.as_slice(), Assignee::Ident(None, &name), index
+	)? }
+	
+	if let Some(vis) = vis {
+		let fields = fields.as_deref_mut().ok_or_else(
+			|| syn::Error::new_spanned(quote![#vis #ty], NO_FIELD_ERROR)
+		)?;
+		
+		let ty = ty.ok_or_else(|| syn::Error::new_spanned(quote![#name], NO_TYPE_ERROR))?;
+		
+		let attrs = match attrs {
+			Attributes::Some(attrs) => attrs,
+			Attributes::None(index) => fields.iter().nth(index).unwrap().attrs.clone()
+		};
+		
+		fields.push(syn::Field {
+			attrs, vis, ty: syn::Type::Path(*ty),
+			    mutability: syn::FieldMutability::None,
+			         ident: Some(name.clone()),
+			   colon_token: None,
+		});
 	}
 	
-	let right = match mode {
-		Mode::Field(span) => {
-			let assignee = assignee.spanned_to(span);
-			if back.is_some() { quote_spanned![span => #(#assignee.)* #inter = #tokens] }
-			else { quote_spanned![span => #(#attrs)* #(#assignee.)* #inter = #tokens;] }
+	if let Some(index) = index {
+		if constrs.get(index).is_some() {
+			constrs.remove(index).extend_into(settings)
 		}
-		Mode::FnField(span) => {
-			let assignee = assignee.spanned_to(span);
-			let field = quote_spanned![span => #(#assignee.)* #inter];
-			
-			let mut field = Group::new(Delimiter::Parenthesis, field);
-			field.set_span(inter.span());
-			
-			let mut group = Group::new(Delimiter::Parenthesis, tokens);
-			group.set_span(span);
-			
-			if back.is_some() { quote![#field #group] }
-			else { quote![#(#attrs)* #field #group;] }
-		}
-		Mode::Method(span) => {
-			let assignee = assignee.spanned_to(span);
-			
-			if inter.is_long() {
-				let group = quote_spanned![span => #by_ref #mut_ #(#assignee).*, #tokens];
-				
-				let mut group = Group::new(Delimiter::Parenthesis, group);
-				group.set_span(span);
-				
-				if back.is_some() { quote![#inter #group] }
-				else { quote![#(#attrs)* #inter #group;] }
-			} else {
-				let mut group = Group::new(Delimiter::Parenthesis, tokens);
-				group.set_span(span);
-				
-				if back.is_some() { quote_spanned![span => #(#assignee.)* #inter #group] }
-				else { quote_spanned![span => #(#attrs)* #(#assignee.)* #inter #group;] }
-			}
-		}
-	};
-	
-	let Some(back) = back else { settings.extend(right); return Ok(()) };
-	property::expand_back(*back, objects, builders, settings, bindings, fields, attributes, right)
+	}
+	settings.extend(setup); Ok(())
 }
+
+const NO_FIELD_ERROR: &str = "a visibility cannot be specified if a struct has not \
+	been declared before the root item or within a binding or conditional scope";
+
+const NO_TYPE_ERROR: &str = "a type must be specified after the name (e.g. `some_name as SomeType`)";
