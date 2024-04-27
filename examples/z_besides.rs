@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -41,28 +41,28 @@ fn main() -> glib::ExitCode {
 		Besides mut object {
 			functional; // if no argument is given, it will bind to a previous variable with the same field name
 			fn_and_arg: |arg| arg
-			~~inner: None
-			
+			inner: None
+			~~
 			inner = None // `=` to assign fields
 			
-			functional;; 'back { ~~unwrap; } // `;;` to call functional fields without arguments
-			method; 'back { ~~unwrap; }
+			functional;; 'back { unwrap; ~~ } // `;;` to call functional fields without arguments
+			method; 'back { unwrap; ~~ }
 			
 			inner = Some(Box::new(_)) @ Besides { // composition with fields
 				fn_and_arg: |arg| arg
 				inner: Some(Box::new(_)) @ Besides { }! // composition with a struct field
-				~~functional: || None
+				functional: || None; ~~
 			}?
 			
-			fn_and_arg := Some(()) 'back { ~~unwrap; } // `:=` to call functional fields with arguments
-			method_arg: Some(()) 'back { ~~unwrap; }
+			fn_and_arg := Some(()) 'back { unwrap; ~~ } // `:=` to call functional fields with arguments
+			method_arg: Some(()) 'back { unwrap; ~~ }
 			
 			fn_and_arg := _ @ Some(()) { unwrap; } // composition with a functional field
 			
 			// the following are not long paths (only generics are given to methods):
-			generic_method::<()>; 'back { ~~unwrap; }
-			generic_method_arg::<Option<()>>: Some(()) 'back { ~~unwrap; } // below is the same
-			generic_method_arg: Some(()) 'back { ~~unwrap; } // the generic was inferred
+			generic_method::<()>; 'back { unwrap; ~~ }
+			generic_method_arg::<Option<()>>: Some(()) 'back { unwrap; ~~ } // below is the same
+			generic_method_arg: Some(()) 'back { unwrap; ~~ } // the generic was inferred
 		}?
 	}
 	
@@ -145,11 +145,11 @@ fn start(app: &gtk::Application) { // composing in a binding
 				}
 			}
 		}
-		~titlebar: &_ @ gtk::HeaderBar {
+		titlebar: &_ @ gtk::HeaderBar {
 			pack_start: &_ @ gtk::Button::with_label("Add child") {
 				connect_clicked: move |_| { count.set(count.get() + 1); bindings!(); }
 			}
-		}!
+		}! ~
 		present;
 	} ];
 }

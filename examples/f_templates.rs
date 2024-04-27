@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -9,7 +9,7 @@ use gtk::{glib, prelude::*};
 
 enum Msg { Increase, Decrease, Reset } // channels again
 
-macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send($msg).unwrap()] }
+macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send_blocking($msg).unwrap()] }
 
 #[view]
 impl BoxTemplate { // we are implementing a struct generated semi-automatically by the view
@@ -26,8 +26,8 @@ impl BoxTemplate { // we are implementing a struct generated semi-automatically 
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
-			~margin_end: 6
-			
+			margin_end: 6
+			~
 			append: &_ @ gtk::Label ref label { // we also export this widget
 				label: glib::gformat!("This is the {nth} view")
 			}
@@ -36,14 +36,14 @@ impl BoxTemplate { // we are implementing a struct generated semi-automatically 
 			}
 		}
 		gtk::Button ref reset { // we will also export this widget although it is independent of the root
-			~label: glib::gformat!("Reset {nth}")
+			label: glib::gformat!("Reset {nth}") ~
 			connect_clicked: clone![tx; move |_| send!(Msg::Reset => tx)]
 		} // we must do something with it in the main view so that it is not lost
 	}
 	
 	// if `Default` were implemented, `!` after braces would suffice instead of writing "::new()"
 	// but there would be no parameters (we could also have defined an unassociated function):
-	fn new(nth: &str, tx: &glib::Sender<Msg>) -> Self {
+	fn new(nth: &str, tx: &async_channel::Sender<Msg>) -> Self {
 		expand_view_here! { }
 		Self { root, label, reset }
 	}
@@ -65,8 +65,8 @@ mod example { // now let's use the template:
 	
 	// let's create two states and two channels for two templates:
 	pub fn start(app: &gtk::Application) {
-		let (tx_1, rx_1) = glib::MainContext::channel(glib::Priority::DEFAULT);
-		let (tx_2, rx_2) = glib::MainContext::channel(glib::Priority::DEFAULT);
+		let (tx_1, rx_1) = async_channel::bounded(1);
+		let (tx_2, rx_2) = async_channel::bounded(1);
 		let (mut count_1, mut count_2) = (0, 0); // the states
 		
 		expand_view_here! { }
@@ -77,16 +77,18 @@ mod example { // now let's use the template:
 			Msg::Reset    => *count = 0,
 		}; // this closure does not capture anything (could be a function)
 		
-		rx_1.attach(None, move |msg| {
-			update(&mut count_1, msg);
-			refresh_template_1(count_1);
-			glib::ControlFlow::Continue
+		glib::spawn_future_local(async move {
+			while let Ok(msg) = rx_1.recv().await {
+				update(&mut count_1, msg);
+				refresh_template_1(count_1);
+			}
 		});
 		
-		rx_2.attach(None, move |msg| {
-			update(&mut count_2, msg);
-			refresh_template_2(count_2);
-			glib::ControlFlow::Continue
+		glib::spawn_future_local(async move {
+			while let Ok(msg) = rx_2.recv().await {
+				update(&mut count_2, msg);
+				refresh_template_2(count_2);
+			}
 		});
 		
 		window.present()
@@ -99,8 +101,8 @@ mod example { // now let's use the template:
 		
 		child: &_ @ gtk::Box {
 			orientation: gtk::Orientation::Vertical
-			~spacing: 6
-			
+			spacing: 6
+			~
 			// `BoxTemplate` is not a widget but its `root` field is:
 			append: &_.root @ BoxTemplate::new("first", &tx_1) first {
 				ref label { // this `ref` is not an item, but we are editing the `label` field
@@ -132,8 +134,8 @@ mod example { // now let's use the template:
 				margin_bottom: 6
 				margin_end: 6
 				margin_start: 6
-				~spacing: 6
-				
+				spacing: 6
+				~
 				// we put the independent widget (the reset button)
 				// of the `first` and `second` templates here:
 				append: &_ @ ref  first.reset { set_hexpand: true }

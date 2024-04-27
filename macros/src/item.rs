@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -34,7 +34,7 @@ fn parse_field(display: Option<&dyn std::fmt::Display>, input: syn::parse::Parse
 		}
 	}
 	
-	thread_local![static COUNT: std::cell::RefCell<usize> = std::cell::RefCell::new(0)];
+	thread_local![static COUNT: std::cell::RefCell<usize> = const { std::cell::RefCell::new(0) }];
 	
 	let (name, auto) = if vis.is_some() { (name?, false) } else {
 		name.map(|name| (name, false)).unwrap_or_else(|_| (syn::Ident::new(&COUNT.with(|cell| {

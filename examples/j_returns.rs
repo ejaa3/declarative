@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -43,8 +43,8 @@ impl Template {
 					margin_bottom: 12
 					margin_end: 12
 					margin_start: 12
-					~margin_top: 12
-					
+					margin_top: 12
+					~
 					// some methods return something, in this case a `BindingBuilder`:
 					bind_property: "visible-child-name", &window, "title"
 						// 'back edits the return of the function or method called back

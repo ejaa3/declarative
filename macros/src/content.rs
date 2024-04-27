@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -53,7 +53,6 @@ pub struct Construct {
 	  object: bool,
 	   tilde: syn::Token![~],
 	    last: Option<syn::Token![~]>,
-	  penult: Content,
 	pub rest: Vec<Content>,
 }
 
@@ -126,11 +125,10 @@ impl syn::parse::Parse for Arm {
 fn with_attrs(input: syn::parse::ParseStream, attrs: Vec<syn::Attribute>) -> syn::Result<Content> {
 	if let Ok(tilde) = input.parse::<syn::Token![~]>() {
 		let     last = input.parse()?;
-		let   object = input.parse::<Option<syn::Token![/]>>()?.is_some();
-		let   penult = Content::Property(property::parse(input, attrs)?);
+		let   object = input.parse::<Option<syn::Token![>]>>()?.is_some();
 		let mut rest = vec![]; while !input.is_empty() { rest.push(input.parse()?) }
 		
-		Ok(Content::Construct(Box::new(Construct { object, tilde, last, penult, rest })))
+		Ok(Content::Construct(Box::new(Construct { object, tilde, last, rest })))
 	} else if let Ok(token) = input.parse::<syn::Lifetime>() {
 		if token.ident == "bind" {
 			if input.parse::<syn::Token![:]>().is_ok() {
@@ -248,7 +246,7 @@ pub(crate) fn expand(
 			Ok(settings.extend(quote![#(#pattrs)* #(#attrs)* #body]))
 		}
 		Content::Construct(construct) => {
-			let Construct { object, tilde, last, penult, rest } = *construct;
+			let Construct { object, tilde, last, rest } = *construct;
 			
 			let Some(index) = constr
 			else { Err(syn::Error::new(tilde.span, crate::ConstrError("only allowed once")))? };
@@ -257,8 +255,6 @@ pub(crate) fn expand(
 				Construction::BuilderPattern { span, tilde: t, .. } |
 				Construction::StructLiteral  { span, tilde: t, .. } => (*span, *t) = (tilde.span, last)
 			}
-			
-			expand(penult, objects, constrs, settings, bindings, fields, pattrs, assignee, constr)?;
 			
 			if object { constrs.remove(index).extend_into(objects) }
 			

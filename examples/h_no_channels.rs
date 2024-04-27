@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -43,8 +43,8 @@ impl Child { // to specify P and R here and in `Child::<P, R>::new()`
 	
 	view![ gtk::Box root {
 		orientation: gtk::Orientation::Vertical
-		~spacing: 6
-		
+		spacing: 6
+		~
 		append: &_ @ gtk::Label {
 			label: &format!("This is the {nth} child")
 			'bind set_label: &format!("The {nth} count is: {count}")
@@ -114,8 +114,8 @@ impl<R> Parent<R> {
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
-			~margin_end: 6
-			
+			margin_end: 6
+			~
 			append: &first_child.data.get().unwrap().0
 			
 			append: &_.data.get().unwrap().0 @

@@ -1,22 +1,18 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!--
-	SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+	SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
 	
 	SPDX-License-Identifier: CC-BY-SA-4.0
 -->
 
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
 	<linearGradient id="gradient" x1="64" y1="128" x2="64" y2="0" gradientUnits="userSpaceOnUse">
-		<stop stop-color="#252C30" offset="0"/>
-		<stop stop-color="#3B3C42" offset="1"/>
+		<stop stop-color="#28b286" offset="0"/>
+		<stop stop-color="#e27cb5" offset="1"/>
 	</linearGradient>
-	<circle cx="64" cy="64" r="60" stroke="#BF9579" stroke-width="6" fill="url(#gradient)"/>
-	<circle cx="64" cy="64" r="63.5" stroke="#3B3C42" fill="none"/>
-	<path stroke="#EF7A8A" stroke-width="6" d="m 24,39 36,9"/>
-	<path stroke="#EF7A8A" stroke-width="6" d="m 21,57 36,9"/>
-	<path stroke="#EF7A8A" stroke-width="6" d="M 27,69 36,33"/>
-	<path stroke="#EF7A8A" stroke-width="6" d="M 45,72 54,36"/>
-	<circle fill="none" stroke="#54B071" stroke-width="6" cx="81" cy="75" r="12"/>
-	<path stroke="#54B071" stroke-width="6" d="M 90,90 102,42"/>
-	<path fill="none" stroke="#7D9BF1" stroke-width="6" d="m 30,87 c 0,0 9,-3 13.5,0 4.5,3 4.5,6 9,9 4.5,3 13.5,0 13.5,0"/>
+	<mask id="mask">
+		<rect width="128" height="128" fill="#fff"/>
+		<path fill="#000" d="m37.5,42a22.5,24 0 0 0-22.5,24 22.5,24 0 0 0 22.5,24 22.5,24 0 0 0 12.5,-4l-4.4,-4.4a16.5,18 0 0 1-8.1,2.4 16.5,18 0 0 1-16.5,-18 16.5,18 0 0 1 16.5,-18 16.5,18 0 0 1 16.5,18 6,6 0 0 1-6,6v6a12,12 0 0 0 12,-12 22.5,24 0 0 0-22.5,-24zm0,12a10.5,12 0 0 0-10.5,12 10.5,12 0 0 0 10.5,12 10.5,12 0 0 0 10.5,-12 10.5,12 0 0 0-10.5,-12zm0,6a4.5,6 0 0 1 4.5,6 4.5,6 0 0 1-4.5,6 4.5,6 0 0 1-4.5,-6 4.5,6 0 0 1 4.5,-6zm4.5,-6v24h6v-24zm42,-12a10.5,13.5 0 0 0-10.5,13.5 4.5,7.5 0 0 1-4.5,7.5h-3v6h3a10.5,13.5 0 0 0 10.5,-13.5 4.5,7.5 0 0 1 4.5,-7.5h3v-6zm9,0v6h3a4.5,7.5 0 0 1 4.5,7.5 10.5,13.5 0 0 0 10.5,13.5h3v-6h-3a4.5,7.5 0 0 1-4.5,-7.5 10.5,13.5 0 0 0-10.5,-13.5zm-27,21v6h3a4.5,7.5 0 0 1 4.5,7.5 10.5,13.5 0 0 0 10.5,13.5h3v-6h-3a4.5,7.5 0 0 1-4.5,-7.5 10.5,13.5 0 0 0-10.5,-13.5zm45,0a10.5,13.5 0 0 0-10.5,13.5 4.5,7.5 0 0 1-4.5,7.5h-3v6h3a10.5,13.5 0 0 0 10.5,-13.5 4.5,7.5 0 0 1 4.5,-7.5h3v-6z"/>
+	</mask>
+	<circle cx="64" cy="64" r="63.5" stroke="#000" fill="url(#gradient)" mask="url(#mask)"/>
 </svg>

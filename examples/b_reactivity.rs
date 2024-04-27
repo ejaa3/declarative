@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -32,8 +32,8 @@ mod example {
 		child: &_ @ gtk::Box {
 			orientation: gtk::Orientation::Vertical
 			// semicolons are optional but good separators:
-			spacing: 6; margin_top: 6; ~margin_bottom: 6
-			
+			spacing: 6; margin_top: 6; margin_bottom: 6
+			~
 			append: &_ @ gtk::Label {
 				label: "Waiting for a change…" // 'bind does not initialize (read below)
 				

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -61,8 +61,8 @@ impl<R> View<R> {
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
-			~margin_end: 6
-			
+			margin_end: 6
+			~
 			attach: &_, 0, 0, 2, 1 @ gtk::Label my_label {
 				hexpand: true
 				'bind set_label: &format!("The count is: {}", state.count)

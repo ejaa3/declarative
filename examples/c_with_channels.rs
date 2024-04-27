@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -13,7 +13,7 @@ use gtk::{glib, prelude::*};
 enum Msg { Increase, Decrease } // as in Elm architecture
 
 // syntactic sugar for sending messages:
-macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send($msg).unwrap()] }
+macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send_blocking($msg).unwrap()] }
 
 struct State { count: i32 } // a simple counting state
 
@@ -28,17 +28,15 @@ impl State {
 	
 	fn start(app: &gtk::Application) {
 		let mut state = Self { count: 0 }; // we create the state
-		
-		// about the following: https://docs.gtk.org/glib/struct.MainContext.html
-		let (tx, rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
-		// looks like https://doc.rust-lang.org/book/ch16-02-message-passing.html
+		let (tx, rx) = async_channel::bounded(1);
 		
 		expand_view_here! { } // here a closure named `refresh` was created
 		
-		rx.attach(None, move |msg| { // `state` and `refresh` lives in this closure
-			state.update(msg); // we update the state
-			refresh(&state); // and now we refresh the view
-			glib::ControlFlow::Continue // this is for glib to keep this closure alive
+		glib::spawn_future_local(async move { // `state` and `refresh` lives in this async block
+			while let Ok(msg) = rx.recv().await {
+				state.update(msg); // we update the state
+				refresh(&state); // and now we refresh the view
+			}
 		});
 		
 		window.present()
@@ -60,8 +58,8 @@ impl State {
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
-			~margin_end: 6
-			
+			margin_end: 6
+			~
 			attach: &_, 0, 0, 2, 1 @ gtk::Label {
 				hexpand: true
 				'bind #set_label: &format!("The count is: {}", state.count)

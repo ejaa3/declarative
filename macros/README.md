@@ -1,19 +1,17 @@
 <!--
-	SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+	SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
 	
 	SPDX-License-Identifier: CC-BY-SA-4.0
 -->
 
 # <img src="../logo.svg" width="96" align="left"/> `declarative-macros`
 
-[![REUSE status]][reuse] [![On crates.io]][crate.io] [![Chat on Matrix]][matrix]
+[![REUSE status]][reuse] [![On crates.io]][crate.io]
 
 [REUSE status]: https://api.reuse.software/badge/github.com/ejaa3/declarative
 [reuse]: https://api.reuse.software/info/github.com/ejaa3/declarative
 [On crates.io]: https://img.shields.io/crates/v/declarative-macros.svg?color=6081D4
 [crate.io]: https://crates.io/crates/declarative-macros
-[Chat on Matrix]: https://matrix.to/img/matrix-badge.svg
-[matrix]: https://matrix.to/#/#declarative-rs:matrix.org
 
 A proc-macro library that implements a generic [DSL] to create complex reactive view code easier to edit and maintain.
 
@@ -22,7 +20,7 @@ To use it, add to your Cargo.toml:
 ~~~ toml
 [dependencies.declarative]
 package = 'declarative-macros'
-version = '0.6.0'
+version = '0.7.0'
 ~~~
 
 ## Main crate

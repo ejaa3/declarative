@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -10,10 +10,10 @@ use gtk::{glib, prelude::*};
 enum Msg { Increase, Decrease }
 
 // syntactic sugar for sending messages:
-macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send($msg).unwrap()] }
+macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send_blocking($msg).unwrap()] }
 
 fn start(app: &gtk::Application) {
-    let (tx, rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
+    let (tx, rx) = async_channel::bounded(1);
     let mut count = 0; // the state
 
     view![ gtk::ApplicationWindow window {
@@ -27,14 +27,14 @@ fn start(app: &gtk::Application) {
             margin_top: 6
             margin_bottom: 6
             margin_start: 6
-            ~margin_end: 6
-
+            margin_end: 6
+            ~
             append: &_ @ gtk::Label {
                 label: "Count unchanged"
                 'bind set_label: &format!("The count is: {count}")
             }
             append: &_ @ gtk::Button {
-                ~label: "Increase"
+                label: "Increase" ~
                 connect_clicked: clone![tx; move |_| send!(Msg::Increase => tx)]
             }
             append: &_ @ gtk::Button::with_label("Decrease") {
@@ -49,10 +49,11 @@ fn start(app: &gtk::Application) {
         Msg::Decrease => *count = count.wrapping_sub(1),
     };
 
-    rx.attach(None, move |msg| {
-        update(&mut count, msg); // the state is updated
-        refresh(count); // now the view is refreshed
-        glib::ControlFlow::Continue
+    glib::spawn_future_local(async move {
+        while let Ok(msg) = rx.recv().await {
+            update(&mut count, msg); // the state is updated
+            refresh(count); // now the view is refreshed
+        }
     });
 
     window.present()

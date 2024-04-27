@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -12,19 +12,19 @@ use gtk::{glib, prelude::*};
 
 enum Msg { Increase, Decrease, Reset } // messages for child components
 
-macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send($msg).unwrap()] }
+macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send_blocking($msg).unwrap()] }
 
 struct Child { // basic structure of a component
 	root: gtk::Box, // the main widget of this component
-	  tx: glib::Sender<Msg> // a transmitter to send messages to this component
+	  tx: async_channel::Sender<Msg> // a transmitter to send messages to this component
 } // we could have declared the structure in the view with just the `tx` field
 
 #[view]
 impl Child {
 	// `nth` will be the child number ("First" or "Second") and we will communicate
 	// with the parent component through a reference to its transmitter (parent_tx):
-	fn new(nth: &'static str, parent_tx: glib::Sender<&'static str>) -> Self {
-		let (tx, rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
+	fn new(nth: &'static str, parent_tx: async_channel::Sender<&'static str>) -> Self {
+		let (tx, rx) = async_channel::bounded(1);
 		let mut count = 0; // the state
 		
 		expand_view_here! { }
@@ -35,10 +35,11 @@ impl Child {
 			Msg::Reset  => { *count = 0; send!(nth => parent_tx) },
 		};
 		
-		rx.attach(None, move |msg| {
-			update(&mut count, msg);
-			bindings! { } // we can refresh the view like this
-			glib::ControlFlow::Continue
+		glib::spawn_future_local(async move {
+			while let Ok(msg) = rx.recv().await {
+				update(&mut count, msg);
+				bindings! { } // we can refresh the view like this
+			}
 		});
 		
 		Self { root, tx }
@@ -46,8 +47,8 @@ impl Child {
 	
 	view![ gtk::Box root {
 		orientation: gtk::Orientation::Vertical
-		~spacing: 6
-		
+		spacing: 6
+		~
 		append: &_ @ gtk::Label {
 			label: glib::gformat!("This is the {nth} child")
 			'bind set_label: &format!("The {nth} count is: {count}")
@@ -79,8 +80,8 @@ impl Child {
 		margin_top: 6
 		margin_bottom: 6
 		margin_start: 6
-		~margin_end: 6
-		
+		margin_end: 6
+		~
 		// remember that the component widget is the `root` field:
 		append: &_.root @ Child::new("First", tx.clone()) first_child { }
 		// we use composition just to give a variable name
@@ -103,12 +104,14 @@ impl Child {
 } ]]
 
 fn start(app: &gtk::Application) {
-	let (tx, rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
+	let (tx, rx) = async_channel::bounded(1);
 	let second_child = Child::new("Second", tx.clone());
 	
 	expand_view_here! { }
 	
-	rx.attach(None, move |nth| { bindings!(); glib::ControlFlow::Continue });
+	glib::spawn_future_local(async move {
+		while let Ok(nth) = rx.recv().await { bindings!() }
+	});
 	window.present()
 }
 

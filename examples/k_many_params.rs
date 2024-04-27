@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -13,35 +13,36 @@ use gtk::{glib, pango, prelude::*};
 // however we can use a struct and put the parameters as fields since
 // declarative allows param structs to be initialized consistently
 
-macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send($msg).unwrap()] }
+macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send_blocking($msg).unwrap()] }
 
 struct Child {
 	        name: &'static str,
 	       count: u8, // the state as a parameter
 	 third_param: &'static str,
 	fourth_param: &'static str,
-	   parent_tx: glib::Sender<&'static str>,
+	   parent_tx: async_channel::Sender<&'static str>,
 }
 
 #[view]
 impl Child {
 	// we name the function `start` due to the `construct!` macro implementation
 	fn start(mut self) -> ChildTemplate { // `mut self` because it has a state that should be mutable
-		let (tx, rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
+		let (tx, rx) = async_channel::bounded(1);
 		
 		expand_view_here! { }
 		
-		rx.attach(None, move |add| {
-			self.count = if add { u8::wrapping_add } else { u8::wrapping_sub } (self.count, 1);
-			bindings! { }
-			glib::ControlFlow::Continue
+		glib::spawn_future_local(async move {
+			while let Ok(add) = rx.recv().await {
+				self.count = if add { u8::wrapping_add } else { u8::wrapping_sub } (self.count, 1);
+				bindings! { }
+			}
 		});
 		
 		ChildTemplate { tx, first_label, root }
 	}
 	
 	view! {
-		struct ChildTemplate { tx: glib::Sender<bool> }
+		struct ChildTemplate { tx: async_channel::Sender<bool> }
 		
 		gtk::Frame ref root {
 			label: self.name
@@ -51,8 +52,8 @@ impl Child {
 				margin_start: 6
 				margin_top: 6
 				orientation: gtk::Orientation::Vertical
-				~spacing: 6
-				
+				spacing: 6
+				~
 				append: &_ @ gtk::Label ref first_label { label: self.third_param }
 				append: &_ @ gtk::Label { label: self.fourth_param }
 				append: &_ @ gtk::Label { 'bind #set_label: &format!("Count: {}", self.count) }
@@ -69,9 +70,13 @@ struct Parent;
 #[view]
 impl Parent {
 	fn start(app: &gtk::Application) {
-		let (tx, rx) = glib::MainContext::channel(glib::Priority::DEFAULT);
+		let (tx, rx) = async_channel::bounded(1);
+		
 		expand_view_here! { }
-		rx.attach(None, move |child| { bindings!(); glib::ControlFlow::Continue });
+		
+		glib::spawn_future_local(async move {
+			while let Ok(child) = rx.recv().await { bindings!() }
+		});
 	}
 	
 	view![ gtk::ApplicationWindow {
@@ -84,24 +89,23 @@ impl Parent {
 				}
 			}
 		}!
-		
-		~child: &_ @ gtk::Grid {
+		child: &_ @ gtk::Grid {
 			column_spacing: 6
 			margin_bottom: 6
 			margin_end: 6
 			margin_start: 6
 			margin_top: 6
-			~row_spacing: 6
-			
+			row_spacing: 6
+			~
 			// to compose with an item that should expand to a struct literal...
 			attach: &_.root, 0, 0, 1, 1 @ Child first_child { // `?` is added after braces
 				name: "First Child"
 				third_param: "Underline"
 				fourth_param: "Hello World"
 				count: 255
-				~parent_tx: tx // with a single tilde the current `construct!` macro appends...
+				parent_tx: tx // with a single tilde the current `construct!` macro appends...
 				// `.start()` to the struct literal, but with double tilde it would not append it
-				
+				~
 				// at this point we edit what `Child::start()` returns (a `ChildTemplate`);
 				// if there were a double tilde we would be directly editing a `Child` instance:
 				first_label.set_attributes: Some(&_) @ pango::AttrList {
@@ -121,7 +125,7 @@ impl Parent {
 				label: "Waiting for greetings"
 				'bind set_label: &format!("Greeting from {child}")
 			}
-		}
+		} ~
 		present;
 	} ];
 }

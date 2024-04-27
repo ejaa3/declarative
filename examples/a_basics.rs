@@ -1,25 +1,26 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
 fn main() -> glib::ExitCode {
-	let greet = "Hello world!";
+	let hello = "Hello";
 	
 	// use `block!` to create a simple declarative scope (a view):
 	declarative::block! {
-		// call a function followed by a variable name to create one (braces required)
-		String::from(greet) main_string { } // let's call this “item”
+		// call a function followed by a variable name to create one
+		String::from(hello) first_item { } // braces required
+		String::from("world!") second_item { }
 	}
 	
-	println!("[block]\n{main_string}\n");
+	println!("[block!]\n{first_item} {second_item}\n");
 	
 	// you might like to rename `block!` to `view!` like so:
 	// use declarative::block as view;
 	
 	view_attributes_example();
-	some_module::example();
+	abc_module::example();
 	construct_example()
 }
 
@@ -28,9 +29,9 @@ use declarative::view;
 // you can use the `#[view]` attribute to separate the view from the logic,
 // in this case a function; its content is the same as `block!`:
 #[view {
-	// writing a type instead of a function call will invoke a `construct!` macro,
-	// which should be expanded into code to instantiate it:
-	String mut main_string { // with `mut` you can mutate here
+	// writing a type instead of a function call will invoke a `construct!`
+	// macro, which should expand into code that instantiates it:
+	String mut main_string { // with `mut` you can mutate inside the braces
 		push_str: "Hello " // this is a method call with an argument
 	}! // because `!` the `construct!` macro expands into `String::default()` (explained later)
 }]
@@ -40,7 +41,7 @@ use declarative::view;
 	// `ref` as an item refers to an existing variable rather than instantiate
 	// in this case we keep editing `main_string` from the view above because of `ref`
 	
-	push_str: &{
+	push_str: &{ // &{this} is normal Rust code like "this string"
 		// the `expand_view_here!` placeholder macro can only consume one view:
 		expand_view_here! { } // here the third view is expanded
 		last_view_string // the function will explain how views are expanded
@@ -67,11 +68,11 @@ fn view_attributes_example() {
 // views are now written as functional macros and can be placed after the function where they are expanded
 // views are expanded in FIFO order with the same `expand_view_here!` placeholder macro
 // views cannot be expanded inside other views with `expand_view_here!` for technical reasons
-mod some_module {
+mod abc_module {
 	use super::construct; // explained later
 	
 	pub fn example() {
-		println!("[some_module]");
+		println!("[abc_module]");
 		
 		let mut string_before_view = String::new();
 		expand_view_here! { } // first `view!` will expand here
@@ -83,7 +84,7 @@ mod some_module {
 	// we can share view code to reduce boilerplate code with
 	// functions whose last argument should be the item to edit:
 	fn push_two_str(first: &str, second: &str, target: &mut String) {
-		expand_view_here! { } // last `view!` will expand here
+		expand_view_here! { } // the second `view!` will expand here
 	}
 	
 	view! {
@@ -98,12 +99,12 @@ mod some_module {
 				@ String mut { push_str: "d" }! // no need to name items (a name is generated)
 			
 			// full paths can be used:
-			super::some_module::push_two_str: &_, _, &mut _ // we can add underscores as necessary
+			super::abc_module::push_two_str: &_, _, &mut _ // we can add underscores as necessary
 				@ String mut { push_str: "e" }! // item names are placed in FIFO order
 				@ str::as_ref("f") { } // the last underscore is always for the parent item
 			
-			// when the number of underscores matches the number of items...
-			push_str: _.as_ref() @ String mut { push_str: "g" }! // a method of the parent item is called
+			// when the number of underscores matches the number of items, a method of...
+			push_str: _.as_ref() @ String mut { push_str: "g" }! // the parent item is called
 			
 			// full paths to methods can also be used (useful for disambiguating traits):
 			String::push_str &mut: &_ // `&mut:` because `push_str()` requires `&mut self` as the first argument
@@ -112,7 +113,7 @@ mod some_module {
 			// remember that `ref` can be an item:
 			push_str: &_ @ ref string_before_view { push_str: "i" }
 			
-			push_str: &last_string_item // `last_string_item` is another item at the end of this view
+			push_str: &last_string_item // "j"
 			
 			// we can use `ref` with `last_string_item` because items are defined at the beginning...
 			push_str: &_ @ ref last_string_item { // and their function calls later at expansion time
@@ -121,8 +122,8 @@ mod some_module {
 			}
 		}!
 		
-		String::from("j") mut last_string_item { } // you can add more items here
 		// we were able to use this item even though it was declared last in the view
+		String::from("j") mut last_string_item { } // `mut` because it is mutated in the previous `ref`
 	}
 	
 	view!(ref target { // the view of `push_two_str()` function
@@ -152,68 +153,66 @@ macro_rules! construct {
 	(? $type:ty) => { <$type>::default() };
 	// example: `Type { }!` and `Type { six: 6 }!` expands to `Type::default()`
 	
-	// for items with a type, `~~` or `~~/` before the last field and `?` after braces
+	// for items with a type, `~~` or `~~>` after the last field and `?` after braces
 	(? ~$struct_literal:expr) => { $struct_literal };
-	// `Type { two: 2; ~~field; six: 6 }?` and
-	// `Type { two: 2; ~~field }?` expands to `Type { two: 2, field }`
+	// `Type { two: 2; field; ~~ six: 6 }?` and
+	// `Type { two: 2; field; ~~ }?` expands to `Type { two: 2, field }`
 	
-	// for items with a type, `~` or `~/` before the last field (optional) and `?` after braces
+	// for items with a type, `~` or `~>` after the last field (optional) and `?` after braces
 	(?  $struct_literal:expr) => { $struct_literal.start() };
 	// `Type { }?` expands to `Type { }.start()`
 	//
-	// `Type { field; ~two: 2; six: 6 }?` and
-	// `Type { field;  two: 2 }?` expands to `Type { field, two: 2 }.start()`
+	// `Type { field; two: 2 ~ six: 6 }?` and
+	// `Type { field; two: 2 }?` expands to `Type { field, two: 2 }.start()`
 	
-	// for items with a function call, `~~` or `~~/` before the last method and `!` after braces
+	// for items with a function call, `~~` or `~~>` after the last method and `!` after braces
 	(~$builder:expr) => { $builder };
-	// `Type::builder() { two: 2; ~~method; six: 6 }!` and
-	// `Type::builder() { two: 2; ~~method }!` expands to `Type::builder().two(2).method()`
+	// `Type::builder() { two: 2; method; ~~ six: 6 }!` and
+	// `Type::builder() { two: 2; method; ~~ }!` expands to `Type::builder().two(2).method()`
 	
-	// for items with a function call, `~` or `~/` before the last method (optional) and `!` after braces
+	// for items with a function call, `~` or `~>` after the last method (optional) and `!` after braces
 	( $builder:expr) => { $builder.build() };
 	// `Type::builder() { }!` expands to `Type::builder().build()`
 	//
-	// `Type::builder() { method; ~two: 2; six: 6 }!` and
-	// `Type::builder() { method;  two: 2 }!` expands to `Type::builder().method().two(2).build()`
+	// `Type::builder() { method; two: 2; ~ six: 6 }!` and
+	// `Type::builder() { method; two: 2; }!` expands to `Type::builder().method().two(2).build()`
 	
-	// for items with a type and `~~` or `~~/` before the last method
+	// for items with a type and `~~` or `~~>` after the last method
 	(~$type:ty => $($methods:tt)*) => { <$type>::builder() $($methods)* };
-	// `Type { two: 2; ~~method; }!` expands to `Type::builder().two(2).method()`
+	// `Type { two: 2; method; ~~ }!` expands to `Type::builder().two(2).method()`
 	
-	// for items with a type and `~` or `~/` before the last method (optional)
+	// for items with a type and `~` or `~>` after the last method (optional)
 	( $type:ty => $($methods:tt)*) => { <$type>::builder() $($methods)*.build() };
 	// `Type { }` expands to `Type::builder().build()`
 	//
-	// `Type { method; ~two: 2; six: 6 }` and
-	// `Type { method;  two: 2 }` expands to `Type::builder().method().two(2).build()`
+	// `Type { method; two: 2 ~ six: 6 }` and
+	// `Type { method; two: 2 }` expands to `Type::builder().method().two(2).build()`
 }
 
 use gtk::{glib, prelude::*}; // let's illustrate the above with gtk-rs:
 
-// the following item consists of a type, single tilde and no `!` or `?` after braces,
-// so it will expand to something like: `gtk::ApplicationWindow::builder().methods().build()`
+// the following item consists of a type, single tilde after the last method and no `!` or `?` after
+// braces, so it will expand to something like: `gtk::ApplicationWindow::builder().methods().build()`
 #[view[ gtk::ApplicationWindow {
 	application: app
 	title: "Title"
 	titlebar: &_ @ gtk::HeaderBar { } // composition works with builder methods or struct fields
 	
 	// the following item consists of a function call, double tilde and `!` after braces,
-	// so it will expand to something like: `gtk::Box::builder().methods().method_with_tildes()`
-	~child: &_ @ gtk::Box::builder() {
+	// so it will expand to something like: `gtk::Box::builder().methods().last_method()`
+	child: &_ @ gtk::Box::builder() {
 		orientation: gtk::Orientation::Vertical
 		spacing: 6
 		margin_top: 6
 		margin_bottom: 6
 		margin_start: 6
 		margin_end: 6
-		~~build; // we call `build()` manually because gtk-rs requires it
-		
-		// now we can compose this item with non-builder methods:
+		build; // we call `build()` manually because gtk-rs requires it (the last method)
+		~~ // now we can compose this item with non-builder methods:
 		append: &_ @ gtk::Button { label: "First" } // these items are expanded as the root item like this:
-		append: &_ @ gtk::Button { label: "Second" } // gtk::Button::builder().label("").build()
+		append: &_ @ gtk::Button { label: "Second" } // gtk::Button::builder().label("Text").build()
 	}!
-	
-	// basically after the method with tildes we can call non-builder methods:
+	~ // now we can call non-builder methods:
 	present; // we show the window
 } ]]
 
@@ -225,7 +224,7 @@ fn construct_example() -> glib::ExitCode {
 }
 
 // declarative expands builder items or struct literal items in the reverse order they were defined
-// if you need to expand any item in the usual order, you must add `/` to the tildes (ie `~/` or `~~/`)
+// if you need to expand any item in the usual order, you must add `>` to the tildes (ie `~>` or `~~>`)
 // this would result in not being able to compose child items with builder methods of the parent
 
 use construct;

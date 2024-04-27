@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -36,8 +36,8 @@ impl Child { // here neither
 		
 		gtk::Box ref root { // we export the root widget
 			orientation: gtk::Orientation::Vertical
-			~spacing: 6
-			
+			spacing: 6
+			~
 			append: &_ @ gtk::Label ref label { // we also export widgets that refresh
 				label: &format!("This is the {nth} child")
 				
@@ -101,8 +101,8 @@ impl Parent {
 			margin_top: 6
 			margin_bottom: 6
 			margin_start: 6
-			~margin_end: 6
-			
+			margin_end: 6
+			~
 			// we compose a bit differently than before:
 			append: &first_child.widgets.get().unwrap().root
 			
