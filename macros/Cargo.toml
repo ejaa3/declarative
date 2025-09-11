@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+# SPDX-FileCopyrightText: 2025 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
 #
 # SPDX-License-Identifier: Unlicense
 
@@ -18,7 +18,7 @@ version     = { workspace = true }
 proc-macro = true
 
 [dependencies]
-compact_str = { version = '0.7', default-features = false }
-proc-macro2 = '1'
-quote = '1'
-syn = { version = '2', features = ['full', 'visit-mut'] }
+compact_str = '0.9'
+proc-macro2 = '1.0'
+quote = '1.0'
+syn = { version = '2.0', features = ['full', 'visit-mut'] }

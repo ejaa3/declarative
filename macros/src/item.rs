@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2025 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -17,7 +17,9 @@ struct Field {
 	auto: bool,
 }
 
-fn parse_field(display: Option<&dyn std::fmt::Display>, input: syn::parse::ParseStream) -> syn::Result<Field> {
+fn parse_field(
+	display: Option<&dyn std::fmt::Display>, input: syn::parse::ParseStream, span: Span
+) -> syn::Result<Field> {
 	let vis = input.parse()?;
 	let vis = if let syn::Visibility::Inherited = vis {
 		input.parse::<syn::Token![ref]>().map(|_| vis).ok()
@@ -34,14 +36,13 @@ fn parse_field(display: Option<&dyn std::fmt::Display>, input: syn::parse::Parse
 		}
 	}
 	
-	thread_local![static COUNT: std::cell::RefCell<usize> = const { std::cell::RefCell::new(0) }];
+	thread_local![static COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }];
 	
 	let (name, auto) = if vis.is_some() { (name?, false) } else {
-		name.map(|name| (name, false)).unwrap_or_else(|_| (syn::Ident::new(&COUNT.with(|cell| {
-			let count = *cell.borrow();
-			*cell.borrow_mut() = count.wrapping_add(1);
+		name.map(|name| (name, false)).unwrap_or_else(|_| (syn::Ident::new(&{
+			let count = COUNT.replace(COUNT.get().wrapping_add(1));
 			compact_str::format_compact!("{}{count}", display.unwrap_or(&Name(ty.as_deref())))
-		}), Span::call_site()), true))
+		}, span), true))
 	};
 	
 	Ok(Field { vis, mut_, name, ty, auto })
@@ -51,9 +52,9 @@ struct Path { path: crate::Path, group: Option<Group>, pub field: Field }
 
 enum Object { Path(Box<Path>), Ref(Punctuated<syn::Ident, syn::Token![.]>) }
 
-pub enum Mode { Builder(Span), Normal(Span), StructLiteral(syn::Token![?]) }
+enum Mode { Builder(Span), Normal(Span), StructLiteral(syn::Token![?]) }
 
-pub(crate) struct Item {
+pub struct Item {
 	  attrs: Option<Vec<syn::Attribute>>,
 	at_span: Span,
 	 object: Object,
@@ -63,7 +64,7 @@ pub(crate) struct Item {
 
 impl Item {
 	pub fn set_attrs(&mut self, attrs: Vec<syn::Attribute>) { self.attrs = Some(attrs) }
-	pub fn as_assignee(&self) -> Assignee {
+	pub fn as_assignee<'a>(&'a self) -> Assignee<'a> {
 		match &self.object {
 			Object::Ref (ref_) => Assignee::Field(None, ref_),
 			Object::Path(path) => Assignee::Ident(None, &path.field.name),
@@ -71,44 +72,47 @@ impl Item {
 	}
 }
 
-pub(crate) fn parse(input: syn::parse::ParseStream, attrs: Option<Vec<syn::Attribute>>) -> syn::Result<Item> {
+pub fn parse(input: syn::parse::ParseStream, attrs: Option<Vec<syn::Attribute>>) -> syn::Result<Item> {
 	let at_span = if attrs.is_none() { input.parse::<syn::Token![@]>()?.span } else { Span::call_site() };
-	let path = input.parse::<syn::Token![ref]>().is_err().then(|| input.parse()).transpose()?;
+	let path: Option<crate::Path> = input.parse::<syn::Token![ref]>().is_err().then(|| input.parse()).transpose()?;
 	
 	let (literable, mut object) = if let Some(path) = path {
 		let group = input.peek(syn::token::Paren).then(|| input.parse()).transpose()?;
-		let field = parse_field(Some(&path), input)?;
+		let field = parse_field(Some(&path), input, path.span())?;
 		(group.is_none(), Object::Path(Box::new(Path { path, group, field })))
 	} else { (false, Object::Ref(crate::parse_unterminated(input)?)) };
 	
-	let braces;
-	let brace = syn::braced!(braces in input);
-	let span = brace.span.join();
+	let (mut body, mut mode) = (vec![], Mode::Normal(Span::call_site()));
 	
-	if let Object::Path(path) = &mut object {
-		if path.field.auto { path.field.name.set_span(span) }
+	if input.peek(syn::token::Brace) {
+		let braces;
+		let brace = syn::braced!(braces in input);
+		let span = brace.span.join();
+		
+		if let Object::Path(path) = &mut object {
+			if path.field.auto { path.field.name.set_span(span) }
+		}
+		
+		while !braces.is_empty() { body.push(braces.parse()?) }
+		
+		mode = if let Some(Ok(tilde)) = literable.then(|| input.parse::<syn::Token![?]>()) {
+			Mode::StructLiteral(tilde)
+		} else if let Ok(pound) = input.parse::<syn::Token![!]>() {
+			if let Object::Path(ref path) = object {
+				if path.group.is_some() { Mode::Builder(pound.span) }
+				else { Mode::Normal(pound.span) }
+			} else { Mode::Normal(pound.span) }
+		} else if let Object::Path(ref path) = object {
+			if path.group.is_some() { Mode::Normal(span) }
+			else { Mode::Builder(span) }
+		} else { Mode::Builder(span) };
 	}
-	
-	let mut body = vec![];
-	while !braces.is_empty() { body.push(braces.parse()?) }
-	
-	let mode = if let Some(Ok(tilde)) = literable.then(|| input.parse::<syn::Token![?]>()) {
-		Mode::StructLiteral(tilde)
-	} else if let Ok(pound) = input.parse::<syn::Token![!]>() {
-		if let Object::Path(ref path) = object {
-			if path.group.is_some() { Mode::Builder(pound.span) }
-			else { Mode::Normal(pound.span) }
-		} else { Mode::Normal(pound.span) }
-	} else if let Object::Path(ref path) = object {
-		if path.group.is_some() { Mode::Normal(span) }
-		else { Mode::Builder(span) }
-	} else { Mode::Builder(span) };
 	
 	Ok(Item { attrs, at_span, object, mode, body })
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn expand(
+pub fn expand(
 	Item { attrs, at_span, object, mode, body }: Item,
 	 objects: &mut TokenStream,
 	 constrs: &mut Vec<Construction>,
@@ -225,7 +229,7 @@ pub fn parse_back(input: syn::parse::ParseStream) -> syn::Result<Option<Box<Back
 			input.parse::<syn::Lifetime>()?
 		} else { return Ok(None) };
 	
-	let mut field = parse_field(None, input)?;
+	let mut field = parse_field(None, input, token.span())?;
 	let braces;
 	let brace = syn::braced!(braces in input);
 	let build = input.parse::<syn::Token![!]>().err().map(|_| brace.span.join());
@@ -254,7 +258,7 @@ fn builds(content: Option<&content::Content>) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn expand_back(
+pub fn expand_back(
 	Back { token, field, body, build }: Back,
 	 objects: &mut TokenStream,
 	 constrs: &mut Vec<Construction>,

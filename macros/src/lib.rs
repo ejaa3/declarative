@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2025 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -46,13 +46,12 @@ pub fn block(stream: TokenStream) -> TokenStream {
 		return TokenStream::from(error.into_compile_error())
 	}
 	
-	let mut items = vec![];
-	let (mut stream, bindings) = unwrap! {
-		view::expand(&mut items, syn::parse_macro_input!(stream))
-	};
+	let mut structs = vec![];
+	let view::Streaming::Roots(roots) = syn::parse_macro_input!(stream) else { panic!() };
+	let (mut stream, bindings) = unwrap!(view::expand(&mut structs, roots));
 	
 	bindings_error(&mut stream, bindings.spans);
-	for item in items { item.to_tokens(&mut stream) }
+	for strukt in structs { strukt.to_tokens(&mut stream) }
 	TokenStream::from(stream)
 }
 
@@ -107,28 +106,42 @@ pub fn view(stream: TokenStream, code: TokenStream) -> TokenStream {
 		while let Some(item) = structs.pop() { item.to_tokens(output) }
 	};
 	
-	if stream.is_empty() {
-		let mut visitor = view::Visitor::Ok { items: vec![], deque: Default::default() };
-		visitor.visit_item_mut(item);
-		
-		match visitor {
-			view::Visitor::Ok { mut items, mut deque } => {
-				if deque.is_empty() { return TokenStream::from(
-					syn::Error::new(Span::call_site(), NO_VIEW_ERROR).into_compile_error()
-				) }
-				
-				while let Some((spans, stream, bindings)) = deque.pop_front() {
-					unwrap!(view::parse(item, &mut output, spans, stream, bindings));
-					fill(item, &mut output, &mut items)
+	match syn::parse_macro_input!(stream) {
+		view::Streaming::Struct { vis, fields } => {
+			let structs = vec![syn::ItemStruct {
+				vis, fields: syn::Fields::Named(syn::FieldsNamed {
+					brace_token: Default::default(), named: fields
+				}),
+				attrs: vec![],
+				struct_token: Default::default(),
+				ident: syn::Ident::new("Unknown", Span::call_site()),
+				generics: Default::default(),
+				semi_token: Default::default(),
+			}];
+			
+			let mut visitor = view::Visitor::Ok { structs, deque: Default::default() };
+			visitor.visit_item_mut(item);
+			
+			match visitor {
+				view::Visitor::Ok { mut structs, mut deque } => {
+					if deque.is_empty() { return TokenStream::from(
+						syn::Error::new(Span::call_site(), NO_VIEW_ERROR).into_compile_error()
+					) }
+					
+					while let Some((spans, stream, bindings)) = deque.pop_front() {
+						unwrap!(view::parse(item, &mut output, spans, stream, bindings));
+						fill(item, &mut output, &mut structs)
+					}
 				}
+				view::Visitor::Error(error) => return TokenStream::from(error.into_compile_error())
 			}
-			view::Visitor::Error(error) => return TokenStream::from(error.into_compile_error())
 		}
-	} else {
-		let (range, mut structs) = (Range(Span::call_site(), Span::call_site()), vec![]);
-		let (stream, bindings) = unwrap!(view::expand(&mut structs, syn::parse_macro_input!(stream)));
-		unwrap!(view::parse(item, &mut output, range, stream, bindings));
-		fill(item, &mut output, &mut structs)
+		view::Streaming::Roots(roots) => {
+			let (range, mut structs) = (Range(Span::call_site(), Span::call_site()), vec![]);
+			let (stream, bindings) = unwrap!(view::expand(&mut structs, roots));
+			unwrap!(view::parse(item, &mut output, range, stream, bindings));
+			fill(item, &mut output, &mut structs)
+		}
 	}
 	
 	item.to_tokens(&mut output); TokenStream::from(output)
@@ -161,8 +174,6 @@ enum Construction {
 		 tilde: Option<syn::Token![~]>,
 	},
 }
-
-enum Mode { Field(Span), Method(Span), FnField(Span) }
 
 enum Path {
 	Type(syn::TypePath), Field {

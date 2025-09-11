@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2025 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -9,7 +9,7 @@ use quote::{TokenStreamExt, quote_spanned};
 use syn::{punctuated::Punctuated, visit_mut::VisitMut};
 use crate::{item, Attributes, Bindings, Range};
 
-pub(crate) enum Root { Struct(syn::ItemStruct), Item(item::Item) }
+pub enum Root { Struct(syn::ItemStruct), Item(item::Item) }
 
 pub struct Roots(Vec<Root>);
 
@@ -35,55 +35,102 @@ impl syn::parse::Parse for Roots {
 	}
 }
 
-pub(crate) fn expand(
-	items: &mut Vec<syn::ItemStruct>, Roots(roots): Roots
+pub enum Streaming {
+	Roots(Roots), Struct {
+		   vis: syn::Visibility,
+		fields: Punctuated<syn::Field, syn::Token![,]>
+	}
+}
+
+impl syn::parse::Parse for Streaming {
+	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+		if input.is_empty() { return Ok(Self::Struct {
+			vis: syn::Visibility::Inherited, fields: Default::default()
+		}) }
+		
+		if input.peek(syn::Token![pub]) && (input.peek2(syn::Token![struct]) || (
+			input.peek2(syn::token::Group) && input.peek3(syn::Token![struct])
+		)) { return Ok(Self::Roots(input.parse()?)) }
+		
+		let mut vis = input.parse()?;
+		let mut fields;
+		
+		if let syn::Visibility::Inherited = vis {
+			if input.peek(syn::Ident) && input.peek2(syn::Token![:]) && (
+				input.peek3(syn::Token![::]) || !input.peek3(syn::Token![:])
+			) {
+				fields = input.parse_terminated(syn::Field::parse_named, syn::Token![,])?
+			} else { return Ok(Self::Roots(input.parse()?)) }
+		} else {
+			let comma = input.parse::<syn::Token![,]>();
+			fields = input.parse_terminated(syn::Field::parse_named, syn::Token![,])?;
+			if comma.is_err() { fields[0].vis = vis; vis = syn::Visibility::Inherited }
+		}
+		
+		Ok(Self::Struct { vis, fields })
+	}
+}
+
+pub fn expand(
+	structs: &mut Vec<syn::ItemStruct>, Roots(roots): Roots
 ) -> syn::Result<(TokenStream, Bindings)> {
 	let (mut objects, mut constrs, mut settings, mut bindings) = Default::default();
-	let (mut final_struct, mut item_struct) = (false, None);
+	let (mut n_fields, mut followed, mut strukt) = (0, true, None);
 	
-	macro_rules! check_struct {
-		($($item:ident)?) => {
-			if final_struct { return Err(
-				syn::Error::new_spanned(item_struct, "structs must be followed by items")
-			) }
-			if let Some(item) = item_struct.take() { items.push(item) }
-			$(item_struct = Some($item); final_struct = true)?
-		}
-	}
+	if let Some(syn::Fields::Named(fields)) = &mut structs.first()
+		.map(|strukt| &strukt.fields) { n_fields = fields.named.len() }
+	
+	let check_struct = |followed: bool, strukt: &mut Option<_>, structs: &mut Vec<_>| {
+		if !followed { return Err(
+			syn::Error::new_spanned(strukt, "structs must be followed by items")
+		) }
+		if let Some(strukt) = strukt.take() { structs.push(strukt) }
+		Ok(())
+	};
 	
 	for root in roots { match root {
-		Root::Struct (item) => { check_struct!(item); }
-		Root::Item   (item) => {
-			final_struct = false;
+		Root::Struct(item) => {
+			check_struct(followed, &mut strukt, structs)?;
+			strukt = Some(item);
+			followed = false
+		}
+		Root::Item(item) => {
+			followed = true;
 			
-			let fields = &mut if let Some(item) = item_struct.as_mut() {
+			let fields = &mut if let Some(item) = strukt.as_mut() {
 				let syn::Fields::Named(named) = &mut item.fields else { panic!() };
 				Some(&mut named.named)
+			} else if let Some(strukt) = structs.first_mut() {
+				let syn::Fields::Named(fields) = &mut strukt.fields else { panic!() };
+				Some(&mut fields.named)
 			} else { None };
 			
 			item::expand(
 				item, &mut objects, &mut constrs, &mut settings,
 				&mut bindings, fields, Attributes::Some(&[])
-			)?;
+			)?
 		}
 	} }
 	
-	check_struct! { }
+	if let Some(syn::Fields::Named(fields)) = structs.first().map(|strukt| &strukt.fields)
+		{ if n_fields == fields.named.len() { structs.swap_remove(0); } }
+	
+	check_struct(followed, &mut strukt, structs)?;
 	for constr in constrs.into_iter().rev() { constr.extend_into(&mut objects) }
 	objects.extend(settings); Ok((objects, bindings))
 }
 
-pub(crate) enum Visitor {
+pub enum Visitor {
 	Error(syn::Error), Ok {
-		items: Vec<syn::ItemStruct>,
-		deque: std::collections::VecDeque<(Range, TokenStream, Bindings)>,
+		structs: Vec<syn::ItemStruct>,
+		  deque: std::collections::VecDeque<(Range, TokenStream, Bindings)>
 	}
 }
 
 macro_rules! item {
-	($visit:ident: $item:ident) => {
+	($visit:ident, $item:ident) => {
 		fn $visit(&mut self, node: &mut syn::$item) {
-			let Self::Ok { items, deque } = self else { return };
+			let Self::Ok { structs, deque } = self else { return };
 			
 			if let syn::$item::Macro(mac) = node {
 				if mac.mac.path.is_ident("view") {
@@ -94,7 +141,7 @@ macro_rules! item {
 					if mac.mac.tokens.is_empty() {
 						return *self = Self::Error(range.error("this view has no content"))
 					}
-					return match mac.mac.parse_body().map(|root| expand(items, root)) {
+					return match mac.mac.parse_body().map(|root| expand(structs, root)) {
 						Ok(expansion) => match expansion {
 							Ok((stream, bindings)) => {
 								deque.push_back((range, stream, bindings));
@@ -112,20 +159,32 @@ macro_rules! item {
 }
 
 impl VisitMut for Visitor {
-	item!(visit_foreign_item_mut: ForeignItem);
-	item!(visit_impl_item_mut: ImplItem);
-	item!(visit_item_mut: Item);
-	item!(visit_trait_item_mut: TraitItem);
+	item!(visit_foreign_item_mut, ForeignItem);
+	item!(visit_impl_item_mut, ImplItem);
+	item!(visit_item_mut, Item);
+	item!(visit_trait_item_mut, TraitItem);
+	
+	fn visit_item_impl_mut(&mut self, node: &mut syn::ItemImpl) {
+		if let Self::Ok { structs, .. } = self {
+			if let syn::Type::Path(path) = node.self_ty.as_ref() {
+				path.path.get_ident().map(|ident| structs.first_mut().map(|strukt| {
+					strukt.attrs = node.attrs.clone();
+					strukt.generics = node.generics.clone();
+					strukt.ident = ident.clone();
+				}));
+			}
+		}
+		syn::visit_mut::visit_item_impl_mut(self, node)
+	}
 }
 
 const ERROR: &str = "views must be consumed with the `expand_view_here!` placeholder macro";
 
-pub(crate) fn parse(
-	        item: &mut syn::Item,
-	      output: &mut TokenStream,
-	       range: Range,
-	mut   stream: TokenStream,
-	mut bindings: Bindings,
+pub fn parse(item: &mut syn::Item,
+           output: &mut TokenStream,
+            range: Range,
+     mut   stream: TokenStream,
+     mut bindings: Bindings,
 ) -> syn::Result<()> {
 	let mut visitor = crate::Visitor::Ok {
 		items: None, assignee: &mut None, placeholder: "expand_view_here", stream: &mut stream
@@ -185,7 +244,7 @@ impl quote::ToTokens for crate::Assignee<'_> {
 }
 
 impl<T: AsRef<[syn::Attribute]>> Attributes<T> {
-	pub fn get<'a>(&'a self, fields: &'a mut Option<&mut Punctuated<syn::Field, syn::Token![,]>>) -> &[syn::Attribute] {
+	pub fn get<'a>(&'a self, fields: &'a mut Option<&mut Punctuated<syn::Field, syn::Token![,]>>) -> &'a[syn::Attribute] {
 		match self {
 			Self::Some(value) => value.as_ref(),
 			Self::None(index) => &fields.as_deref().unwrap().iter().nth(*index).unwrap().attrs,

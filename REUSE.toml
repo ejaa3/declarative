@@ -1,0 +1,10 @@
+version = 1
+SPDX-PackageName = 'declarative'
+SPDX-PackageSupplier = 'Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>'
+SPDX-PackageDownloadLocation = 'https://github.com/ejaa3/declarative'
+
+[[annotations]]
+path = ['dark.png', 'light.png']
+precedence = 'aggregate'
+SPDX-FileCopyrightText = '2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>'
+SPDX-License-Identifier = 'Unlicense'

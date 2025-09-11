@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2025 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -202,7 +202,7 @@ fn scope(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn expand(
+pub fn expand(
 	 content: Content,
 	 objects: &mut TokenStream,
 	 constrs: &mut Vec<Construction>,
@@ -243,7 +243,9 @@ pub(crate) fn expand(
 			let pattrs = pattrs.get(fields);
 			bindings.spans.push(token.span());
 			bindings.stream.extend(quote![#(#pattrs)* #(#attrs)* #if_ #cond #body]);
-			Ok(settings.extend(quote![#(#pattrs)* #(#attrs)* #body]))
+			
+			settings.extend(quote![#(#pattrs)* #(#attrs)* #body]);
+			Ok(())
 		}
 		Content::Construct(construct) => {
 			let Construct { object, tilde, last, rest } = *construct;
@@ -280,8 +282,8 @@ pub(crate) fn expand(
 			
 			let pattrs = pattrs.get(fields);
 			let let_ = syn::Ident::new("let", token.span());
-			
-			Ok(settings.extend(quote![#(#pattrs)* #(#attrs)* #let_ #mut_ #name #equal #expr;]))
+			settings.extend(quote![#(#pattrs)* #(#attrs)* #let_ #mut_ #name #equal #expr;]);
+			Ok(())
 		}
 		Content::Edit(edit) => property::expand_edit(
 			*edit, objects, constrs, settings, bindings, fields, pattrs, assignee
@@ -309,7 +311,8 @@ pub(crate) fn expand(
 				}).collect();
 			
 			let mut body = Group::new(Delimiter::Brace, body?); body.set_span(brace.span.join());
-			Ok(settings.extend(quote![#(#pattrs)* #(#attrs)* #token #expr #body]))
+			settings.extend(quote![#(#pattrs)* #(#attrs)* #token #expr #body]);
+			Ok(())
 		}
 		Content::Property(prop) => property::expand(
 			*prop, objects, constrs, settings, bindings, fields, pattrs, assignee, constr

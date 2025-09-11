@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2025 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -10,8 +10,8 @@ fn main() -> glib::ExitCode {
 	// use `block!` to create a simple declarative scope (a view):
 	declarative::block! {
 		// call a function followed by a variable name to create one
-		String::from(hello) first_item { } // braces required
-		String::from("world!") second_item { }
+		String::from(hello) first_item { } // braces should be written...
+		String::from("world!") second_item { } // even if they are empty
 	}
 	
 	println!("[block!]\n{first_item} {second_item}\n");

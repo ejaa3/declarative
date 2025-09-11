@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2025 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -17,9 +17,9 @@ macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send_blocking($msg).unwrap()
 struct Child { // basic structure of a component
 	root: gtk::Box, // the main widget of this component
 	  tx: async_channel::Sender<Msg> // a transmitter to send messages to this component
-} // we could have declared the structure in the view with just the `tx` field
+} // instead of writing this struct, it could have been...
 
-#[view]
+#[view] // ... automatically generated with `#[view(tx: async_channel::Sender<Msg>)]`
 impl Child {
 	// `nth` will be the child number ("First" or "Second") and we will communicate
 	// with the parent component through a reference to its transmitter (parent_tx):

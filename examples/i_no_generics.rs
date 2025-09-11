@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2025 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -32,7 +32,8 @@ impl Child { // here neither
 	}
 	
 	view! {
-		struct Widgets { }
+		struct Widgets { } // this is a template, as in example `f_template`
+		// each struct must be followed by at least one item; we will generate its fields from them
 		
 		gtk::Box ref root { // we export the root widget
 			orientation: gtk::Orientation::Vertical

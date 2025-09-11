@@ -1,8 +1,0 @@
-Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: declarative
-Upstream-Contact: Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
-Source: https://github.com/ejaa3/declarative
-
-Files: dark.png light.png
-Copyright: 2023 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
-License: Unlicense

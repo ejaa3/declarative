@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2025 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -11,16 +11,18 @@ enum Msg { Increase, Decrease, Reset } // channels again
 
 macro_rules! send { [$msg:expr => $tx:expr] => [$tx.send_blocking($msg).unwrap()] }
 
-#[view]
-impl BoxTemplate { // we are implementing a struct generated semi-automatically by the view
-	view! { // specifically this is the struct:
-		struct BoxTemplate { } // it is also possible to change the visibility or add more fields if needed
-		// each struct must be followed by at least one item; we will generate its fields from them
-		
-		// to “export” this widget as private in the template, you must give it a name preceded by `ref` or `pub(self)`:
+#[view] // we are implementing a struct generated automatically by the view
+impl BoxTemplate { // visibility could be changed, like `#[view(pub)]`
+	// more fields could be added, such as `#[view(integer: i32, pub float: f32)]`
+	// or both, like `#[view(pub, integer: i32, pub float: f32)]`
+	
+	view! {
+		// to reference this widget as a template field, you must give it a name preceded by `ref` (same as `pub(self)`)
+		// or other visibility; if no widgets were exported, no struct would be automatically generated
 		gtk::Box ref root { // the type is assumed to be `gtk::Box`, but an incorrect assumption is possible
 			// in such case the correct type should be specified with `as Type` after the name (only type paths supported)
 			// for public visibility use `pub` or similar instead of `ref` or `pub(self)`
+			
 			orientation: gtk::Orientation::Vertical
 			spacing: 6
 			margin_top: 6
