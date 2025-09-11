@@ -22,7 +22,7 @@ To use it, add to your Cargo.toml:
 ~~~ toml
 [dependencies.declarative]
 package = 'declarative-macros'
-version = '0.7.1'
+version = '0.7.2'
 ~~~
 
 ## Main crate

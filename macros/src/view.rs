@@ -49,7 +49,7 @@ impl syn::parse::Parse for Streaming {
 		}) }
 		
 		if input.peek(syn::Token![pub]) && (input.peek2(syn::Token![struct]) || (
-			input.peek2(syn::token::Group) && input.peek3(syn::Token![struct])
+			input.peek2(syn::token::Paren) && input.peek3(syn::Token![struct])
 		)) { return Ok(Self::Roots(input.parse()?)) }
 		
 		let mut vis = input.parse()?;
@@ -63,10 +63,11 @@ impl syn::parse::Parse for Streaming {
 			} else { return Ok(Self::Roots(input.parse()?)) }
 		} else {
 			let comma = input.parse::<syn::Token![,]>();
-			fields = input.parse_terminated(syn::Field::parse_named, syn::Token![,])?;
-			if comma.is_err() { fields[0].vis = vis; vis = syn::Visibility::Inherited }
-		}
-		
+			if input.is_empty() { fields = Default::default() } else {
+				fields = input.parse_terminated(syn::Field::parse_named, syn::Token![,])?;
+				if comma.is_err() { fields[0].vis = vis; vis = syn::Visibility::Inherited }
+			} // this condition prevents panicking with `attempt to subtract with overflow`
+		}     // while expanding #[view(pub)] as it should
 		Ok(Self::Struct { vis, fields })
 	}
 }

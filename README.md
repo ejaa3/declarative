@@ -21,7 +21,7 @@ To use it, add to your Cargo.toml:
 
 ~~~ toml
 [dependencies.declarative]
-version = '0.7.1'
+version = '0.7.2'
 ~~~
 
 To learn how to use macros, currently the best way is to clone the repository, read the source code of the examples in alphabetical order and run them like this:
