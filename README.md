@@ -21,10 +21,10 @@ To use it, add to your Cargo.toml:
 
 ~~~ toml
 [dependencies.declarative]
-version = '0.7.2'
+version = '0.7.3'
 ~~~
 
-To learn how to use macros, currently the best way is to clone the repository, read the source code of the examples in alphabetical order and run them like this:
+To learn how to use macros, the quick way is to see the [usage](#usage), or clone the repository to read the source code of the examples in alphabetical order and run them like this:
 
 ~~~ bash
 cargo run --example EXAMPLE_NAME
@@ -38,7 +38,7 @@ The examples depend on [gtk-rs], so you should familiarize yourself with [gtk-rs
 
 In addition to macro features, the examples also show some usage patterns (templates, components, Elm, etc.). GTK has a pattern of its own due to its object orientation and `declarative` integrates well, but there is no example about it (it would be verbose and exclusive to GTK, while `declarative` is not GTK based).
 
-## Counter application example
+<details><summary><h3>Counter application example</h3></summary>
 
 The following is an implementation of the Elm architecture with [gtk-rs]:
 
@@ -113,6 +113,1034 @@ To execute, run:
 ~~~ bash
 cargo run --example y_readme
 ~~~
+
+</details>
+
+## Usage
+
+This is a non-exhaustive summary of how `declarative` expands in the most common use cases. The code snippets on the left expand into the code blocks on the right, and assume the following at the beginning of the file:
+
+~~~ rust
+#![allow(unused)]
+use declarative::{block, construct, view};
+use gtk::{prelude::*, Orientation::*, glib::object::IsA};
+~~~
+
+<details><summary>Root items and property assignments</summary><br/><table><tr><td>
+
+~~~ rust
+block! {
+	gtk::Frame { } // just a type
+	gtk::Button { label: "Click" }
+	gtk::Label { label: "Text"; lines: 2 }
+	
+	gtk::Window::new() { // a function call
+		#[cfg(debug_assertions)]
+		add_css_class: "devel"
+	}
+}
+~~~
+
+</td><td>
+
+Items defined with the builder pattern are expanded in reverse order:
+
+~~~ rust
+let gtk_window_new_3 = gtk::Window::new();
+let gtk_label_2 = <gtk::Label>::builder().label("Text").lines(2).build();
+let gtk_button_1 = <gtk::Button>::builder().label("Click").build();
+let gtk_frame_0 = <gtk::Frame>::builder().build();
+#[cfg(debug_assertions)]
+gtk_window_new_3.add_css_class("devel");
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Child items</summary><br/>
+
+The underscore (_) in an argument is a placeholder for the variable name of the item followed by the at sign (@).
+
+<table><tr><td>
+
+~~~ rust
+block!(gtk::Frame {
+	child: &_ @ gtk::ScrolledWindow {
+		child: &_ @ gtk::Button { label: "Click" }
+	}
+	label_widget: &_ @ gtk::Label { }
+});
+~~~
+
+Reverse order allows child items in the builder pattern.
+
+</td><td>
+
+~~~ rust
+let gtk_label_3 = <gtk::Label>::builder().build();
+let gtk_button_2 = <gtk::Button>::builder().label("Click").build();
+let gtk_scrolledwindow_1 = <gtk::ScrolledWindow>::builder()
+    .child(&gtk_button_2)
+    .build();
+let gtk_frame_0 = <gtk::Frame>::builder()
+    .child(&gtk_scrolledwindow_1)
+    .label_widget(&gtk_label_3)
+    .build();
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Do not use the builder pattern</summary><br/>
+
+<table><tr><td>
+
+~~~ rust
+block! {
+	gtk::Box {
+		set_orientation: Vertical
+		set_spacing: 6
+		set_margin_start: 6
+	}! // just add `!` after `}`
+	
+	// or call a function:
+	gtk::Box::new(Horizontal, 6) {
+		set_margin_start: 6
+	}
+}
+~~~
+
+</td><td>
+
+In this case the items are expanded in the same order:
+
+~~~ rust
+let gtk_box_0 = <gtk::Box>::default();
+let gtk_box_new_1 = gtk::Box::new(Horizontal, 6);
+gtk_box_0.set_orientation(Vertical);
+gtk_box_0.set_spacing(6);
+gtk_box_0.set_margin_start(6);
+gtk_box_new_1.set_margin_start(6);
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Multiple arguments</summary><br/>
+
+<table><tr><td>
+
+As always, the comma (,) separates arguments:
+
+~~~ rust
+block!(gtk::Grid::new() {
+	attach: &_, 0, 0, 1, 1 @ gtk::Label { }
+	attach: &_, 1, 0, 1, 1 @ gtk::Label { }
+});
+~~~
+
+</td><td>
+
+~~~ rust
+let gtk_grid_new_0 = gtk::Grid::new();
+let gtk_label_2 = <gtk::Label>::builder().build();
+let gtk_label_1 = <gtk::Label>::builder().build();
+gtk_grid_new_0.attach(&gtk_label_1, 0, 0, 1, 1);
+gtk_grid_new_0.attach(&gtk_label_2, 1, 0, 1, 1);
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Multiple child items in the same property assignment</summary><br/>
+
+Basically one at sign for each underscore. The first underscore is for the first @ item, and the last underscore is for the last @ item.
+
+<table><tr><td>
+
+~~~ rust
+block!(gtk::Notebook::new() {
+	append_page: &_, Some(&_)
+		@ gtk::Button { label: "Click 1" }
+		@ gtk::Label { label: "Tab 1" }
+	
+	append_page_menu: &_, Some(&_), Some(&_)
+		@ gtk::Button { label: "Click 2" }
+		@ gtk::Label { label: "Tab 2" }
+		@ gtk::Label { label: "Menu 2" }
+});
+~~~
+
+</td><td>
+
+~~~ rust
+let gtk_notebook_new_0 = gtk::Notebook::new();
+let gtk_label_5 = <gtk::Label>::builder().label("Menu 2").build();
+let gtk_label_4 = <gtk::Label>::builder().label("Tab 2").build();
+let gtk_button_3 = <gtk::Button>::builder().label("Click 2").build();
+let gtk_label_2 = <gtk::Label>::builder().label("Tab 1").build();
+let gtk_button_1 = <gtk::Button>::builder().label("Click 1").build();
+gtk_notebook_new_0.append_page(&gtk_button_1, Some(&gtk_label_2));
+gtk_notebook_new_0.append_page_menu(&gtk_button_3, Some(&gtk_label_4), Some(&gtk_label_5));
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Share property assignments</summary><br/>
+
+The last underscore (_) without a corresponding at sign (@) indicates the variable name of the current item as an argument to a function (not a method).
+
+<table><tr><td>
+
+~~~ rust
+fn main() {
+	block! {
+		gtk::Button { label: "Click"; set_all_margins: 6, &_ }
+		gtk::Label { label: "Text"; set_all_margins: 12, &_ }
+	}
+}
+
+fn set_all_margins(px: i32, widget: &impl IsA<gtk::Widget>) {
+	block!(ref widget { // `ref` to refer to an existing variable
+		set_margin_bottom: px
+		set_margin_end: px
+		set_margin_start: px
+		set_margin_top: px
+	}); // `ref widget { }` is an item
+}
+~~~
+
+</td><td>
+
+~~~ rust
+fn main() {
+	let gtk_label_1 = <gtk::Label>::builder().label("Text").build();
+	let gtk_button_0 = <gtk::Button>::builder().label("Click").build();
+	set_all_margins(6, &gtk_button_0);
+	set_all_margins(12, &gtk_label_1);
+}
+
+fn set_all_margins(px: i32, widget: &impl IsA<gtk::Widget>) {
+	let _ = widget;
+	widget.set_margin_bottom(px);
+	widget.set_margin_end(px);
+	widget.set_margin_start(px);
+	widget.set_margin_top(px);
+}
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Items with custom variable name</summary><br/>
+
+<table><tr><td>
+
+~~~ rust
+block!(gtk::Box::new(Vertical, 6) vert_box {
+	append: &_ @ gtk::Button my_button { }
+});
+~~~
+
+</td><td>
+
+~~~ rust
+let vert_box = gtk::Box::new(Vertical, 6);
+let my_button = <gtk::Button>::builder().build();
+vert_box.append(&my_button);
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Break the builder pattern</summary><br/>
+
+<table><tr><td>
+
+~~~ rust
+block! {
+	gtk::Box {
+		orientation: Vertical
+		~ // adds `build()` automatically
+		set_spacing: 6
+	}
+	gtk::Box {
+		orientation: Horizontal
+		build; // semicolon for not receiving arguments
+		~~ // we had added `build()`
+		set_spacing: 12
+	}
+}
+~~~
+
+</td><td>
+
+Methods outside the builder pattern are called in the same order.
+
+~~~ rust
+let gtk_box_1 = <gtk::Box>::builder()
+    .orientation(Horizontal)
+    .build();
+let gtk_box_0 = <gtk::Box>::builder()
+    .orientation(Vertical)
+    .build();
+gtk_box_0.set_spacing(6);
+gtk_box_1.set_spacing(12);
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Expand builder patterns in order</summary><br/>
+
+<table><tr><td>
+
+~~~ rust
+block! {
+	gtk::Box {
+		orientation: Vertical
+		~> // just add `>`
+		set_spacing: 6
+	}
+	gtk::Box {
+		orientation: Horizontal
+		build;
+		~~>
+		set_spacing: 12
+	}
+}
+~~~
+
+</td><td>
+
+~~~ rust
+let gtk_box_0 = <gtk::Box>::builder()
+    .orientation(Vertical)
+    .build();
+let gtk_box_1 = <gtk::Box>::builder()
+    .orientation(Horizontal)
+    .build();
+gtk_box_0.set_spacing(6);
+gtk_box_1.set_spacing(12);
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Expand properties as chain methods when defining an item with a function call</summary><br/>
+
+<table><tr><td>
+
+~~~ rust
+block! { // call a function:
+	gtk::Box::builder() {
+		orientation: Vertical
+		spacing: 6
+	}! // and add `!` after `}`
+	
+	gtk::Box::builder() {
+		orientation: Horizontal
+		~ // this way can also be broken
+		set_spacing: 12
+	}!
+}
+~~~
+
+</td><td>
+
+This way also defines variables in reverse order, unless `>` is added after `~` or `~~`:
+
+~~~ rust
+let gtk_box_builder_1 = gtk::Box::builder()
+	.orientation(Horizontal)
+	.build();
+let gtk_box_builder_0 = gtk::Box::builder()
+	.orientation(Vertical)
+	.spacing(6)
+	.build();
+gtk_box_builder_1.set_spacing(12);
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Edit returns with <code>'back</code></summary><br/>
+
+<table><tr><td>
+
+~~~ rust
+block!(gtk::Stack stack {
+	bind_property: "hexpand", &stack, "vexpand"
+		'back { bidirectional; sync_create; } // chained
+		// `build!()` is added (`~` can be used)
+	
+	add_child: &_ @ gtk::Label { label: "Label" }
+		'back { set_title: "Page 1"; set_name: "page_1" }!
+		// `!` is added after `}` to prevent methods from chaining
+	
+	add_child: &_ @ gtk::Button { } // custom name:
+		'back my_page { set_title: "Page 2" }!
+}!);
+~~~
+
+</td><td>
+
+~~~ rust
+let stack = <gtk::Stack>::default();
+let gtk_button_3 = <gtk::Button>::builder().build();
+let gtk_label_1 = <gtk::Label>::builder().label("Label").build();
+stack.bind_property("hexpand", &stack, "vexpand")
+    .bidirectional()
+    .sync_create()
+    .build();
+let back_2 = stack.add_child(&gtk_label_1);
+back_2.set_title("Page 1");
+back_2.set_name("page_1");
+let my_page = stack.add_child(&gtk_button_3);
+my_page.set_title("Page 2");
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Conditional property assignments</summary><br/>
+
+<table><tr><td>
+
+~~~ rust
+let device = "phone";
+
+block!(gtk::Box {
+	spacing: if device == "phone" { 6 } else { 12 }
+	
+	if device == "laptop" {
+		set_margin_end: 12
+		set_orientation: Horizontal
+	} else {
+		set_margin_bottom: 12
+		set_orientation: Vertical
+	} // builder pattern is ignored inside conditionals
+	
+	match device { // chain methods too
+		"phone" => set_tooltip_text: Some("phone")
+		"laptop" => {
+			set_tooltip_text: Some("laptop")
+			set_css_classes: &["laptop"]
+		}
+		_ => { set_hexpand: false; set_vexpand: false }
+	}
+	
+	margin_end: 6; margin_bottom: 6
+});
+~~~
+
+</td><td>
+
+~~~ rust
+let gtk_box_0 = <gtk::Box>::builder()
+    .spacing(if device == "phone" { 6 } else { 12 })
+    .margin_end(6)
+    .margin_bottom(6)
+    .build();
+if device == "laptop" {
+    gtk_box_0.set_margin_end(12);
+    gtk_box_0.set_orientation(Horizontal);
+} else {
+    gtk_box_0.set_margin_bottom(12);
+    gtk_box_0.set_orientation(Vertical);
+}
+match device {
+    "phone" => {
+        gtk_box_0.set_tooltip_text(Some("phone"));
+    }
+    "laptop" => {
+        gtk_box_0.set_tooltip_text(Some("laptop"));
+        gtk_box_0.set_css_classes(&["laptop"]);
+    }
+    _ => {
+        gtk_box_0.set_hexpand(false);
+        gtk_box_0.set_vexpand(false);
+    }
+}
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Property bindings</summary><br/>
+
+<table><tr><td>
+
+~~~ rust
+block!(gtk::Box root {
+	// let's make the margins always...
+	spacing: 6 // equal to the spacing
+	
+	// prefix 'bind to the properties to be bound
+	'bind set_margin_top: root.spacing()
+	'bind set_margin_bottom: root.spacing()
+	'bind { // or use braces for many properties
+		set_margin_start: root.spacing()
+		set_margin_end: root.spacing()
+	} // bindings do not expand in chain
+	~
+	append: &_ @ gtk::Label label { }
+	
+	// this method calls a closure when `spacing` changes
+	connect_spacing_notify: move |root| {
+		let text = format!("spacing is {}", root.spacing());
+		bindings! { } // here the bindings are expanded
+		label.set_label(&text);
+	}
+});
+~~~
+
+</td><td>
+
+~~~ rust
+let label = <gtk::Label>::builder().build();
+let root = <gtk::Box>::builder().spacing(6).build();
+root.append(&label);
+root.connect_spacing_notify(move |root| {
+    let text = alloc::__export::must_use({
+        alloc::fmt::format(alloc::__export::format_args!(
+            "spacing is {}",
+            root.spacing()
+        ))
+    });
+    root.set_margin_top(root.spacing());
+    root.set_margin_bottom(root.spacing());
+    {
+        root.set_margin_start(root.spacing());
+        root.set_margin_end(root.spacing());
+    }
+    label.set_label(&text);
+});
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Expand bindings twice</summary><br/>
+
+<table><tr><td>
+
+~~~ rust
+block!(gtk::Box root {
+	spacing: 6
+	~ // just add `#` after 'bind
+	'bind #set_margin_top: root.spacing()
+	'bind #set_margin_bottom: root.spacing()
+	'bind #{
+		set_margin_start: root.spacing()
+		set_margin_end: root.spacing()
+	}
+	connect_spacing_notify: |root| bindings!()
+});
+~~~
+
+Bindings will be expanded as usual (like a normal property assignment) and in the `bindings!()` placeholder macro.
+
+</td><td>
+
+~~~ rust
+let root = <gtk::Box>::builder().spacing(6).build();
+root.set_margin_top(root.spacing());
+root.set_margin_bottom(root.spacing());
+{
+    root.set_margin_start(root.spacing());
+    root.set_margin_end(root.spacing());
+}
+root.connect_spacing_notify(|root| {
+    root.set_margin_top(root.spacing());
+    root.set_margin_bottom(root.spacing());
+    {
+        root.set_margin_start(root.spacing());
+        root.set_margin_end(root.spacing());
+    }
+});
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Expand bindings in a variable</summary><br/>
+
+<table><tr><td>
+
+~~~ rust
+let mut resets = 0;
+
+block!(gtk::Box root {
+	margin_top: 6; margin_start: 6
+	~
+	'bind #set_margin_bottom: root.margin_top()
+	'consume top_to_bottom = |root: &gtk::Box| bindings!()
+	// all bindings declared up to here were...
+	// consumed in the `top_to_bottom` variable
+	
+	'bind #set_margin_end: root.margin_start()
+	'consume start_to_end = |root: &gtk::Box| bindings!()
+	// to consume multiple times, ...
+	// there must be new bindings beforehand
+	
+	connect_margin_top_notify: top_to_bottom
+	connect_margin_start_notify: start_to_end
+	
+	'bind { set_margin_top: 6; set_margin_start: 6 }
+	'consume mut reset = || { resets += 1; bindings!() }
+}); // the consumer variable can be mutable
+
+reset()
+~~~
+
+</td><td>
+
+~~~ rust
+let mut resets = 0;
+let root = <gtk::Box>::builder().margin_top(6).margin_start(6).build();
+root.set_margin_bottom(root.margin_top());
+let top_to_bottom = |root: &gtk::Box| {
+    root.set_margin_bottom(root.margin_top());
+};
+root.set_margin_end(root.margin_start());
+let start_to_end = |root: &gtk::Box| {
+    root.set_margin_end(root.margin_start());
+};
+root.connect_margin_top_notify(top_to_bottom);
+root.connect_margin_start_notify(start_to_end);
+let mut reset = || {
+    resets += 1;
+    {
+        {
+            root.set_margin_top(6);
+            root.set_margin_start(6);
+        }
+    }
+};
+reset()
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Expand bindings out of view</summary><br/>
+
+<table><tr><td>
+
+~~~ rust
+#[view(gtk::ToggleButton root {
+	label: "any label"
+	'bind set_label: argument
+	'bind set_active: !root.is_active()
+})] // the view code is written in this attribute
+fn main() {
+	expand_view_here! { } // placeholder macro
+	let toggle = move |argument| bindings!();
+	toggle("new label");
+}
+~~~
+
+</td><td>
+
+~~~ rust
+fn main() {
+    let root = <gtk::ToggleButton>::builder().label("any label").build();
+    let toggle = move |argument| {
+        root.set_label(argument);
+        root.set_active(!root.is_active());
+    };
+    toggle("new label");
+}
+~~~
+
+</td></tr><tr><td>
+
+~~~ rust
+#[view] // this way the view code can be...
+mod module { // written after the function
+	use super::*;
+	fn function() {
+		expand_view_here! { } // placeholder macro
+		let toggle = move |argument| bindings!();
+		toggle("new label");
+	}
+	view!(gtk::ToggleButton root {
+		label: "any label"
+		'bind set_label: argument
+		'bind set_active: !root.is_active()
+	});
+}
+~~~
+
+</td><td>
+
+~~~ rust
+mod module {
+    use super::*;
+    fn function() {
+        let root = <gtk::ToggleButton>::builder().label("any label").build();
+        let toggle = move |argument| {
+            root.set_label(argument);
+            root.set_active(!root.is_active());
+        };
+        toggle("new label");
+    }
+}
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Templates</summary><br/>
+
+A template is simply a struct that references some widgets in the view. Several structs can be defined, but each one is followed by one or more items.
+
+<table><tr><td>
+
+~~~ rust
+#[view]
+mod module {
+	pub fn template(text: &str) -> Template {
+		use super::*;
+		expand_view_here! { }
+		Template { int: 7, float: 7.0, root, button, label }
+	}
+	view! { // a struct is declared inside the view
+		pub struct Template { int: i32, pub float: f32 }
+		
+		// due to `pub` this item is included in the...
+		gtk::Box pub root { // template as a public field
+			append: &_ @ gtk::Button { label: text }
+			append: &_ @ gtk::Button pub button { }
+			// the first button is not included
+			
+			append: &_ @ gtk::Label ref label { } // ...
+		}! // due to `ref` the label is included as private
+	}
+}
+
+fn main() {
+	block!(gtk::Frame { // the child is the...
+		// root item, not the template itself
+		child: &_.root @ module::template("text") {
+			// to edit template fields, use a dot
+			root.set_spacing: 6
+			button.set_label: "Button"
+			
+			// `ref` to edit a template field...
+			ref root { // within a scope
+				set_margin_top: 6
+				set_margin_bottom: 6
+			}
+		}
+	});
+}
+~~~
+
+</td><td>
+
+~~~ rust
+mod module {
+    pub fn template(text: &str) -> Template {
+        use super::*;
+        let root = <gtk::Box>::default();
+        let label = <gtk::Label>::builder().build();
+        let button = <gtk::Button>::builder().build();
+        let gtk_button_0 = <gtk::Button>::builder().label(text).build();
+        root.append(&gtk_button_0);
+        root.append(&button);
+        root.append(&label);
+        Template { int: 7, float: 7.0, root, button, label }
+    }
+    pub struct Template {
+        int: i32,
+        pub float: f32,
+        pub root: gtk::Box,
+        pub button: gtk::Button,
+        label: gtk::Label,
+    }
+}
+
+fn main() {
+    let module_template_1 = module::template("text");
+    let gtk_frame_0 = <gtk::Frame>::builder()
+        .child(&module_template_1.root)
+        .build();
+    module_template_1.root.set_spacing(6);
+    module_template_1.button.set_label("Button");
+    let _ = module_template_1.root;
+    module_template_1.root.set_margin_top(6);
+    module_template_1.root.set_margin_bottom(6);
+}
+~~~
+
+</td></tr><tr><td>
+
+~~~ rust
+#[view { // a struct is declared inside the view
+	pub struct Template { int: i32, pub float: f32 }
+	
+	// due to `pub` this item is included in the...
+	gtk::Box pub root { // template as a public field
+		append: &_ @ gtk::Button { label: text }
+		append: &_ @ gtk::Button pub button { }
+		// the first button is not included
+		
+		append: &_ @ gtk::Label ref label { } // ...
+	}! // due to `ref` the label is included as private
+}]
+pub fn template(text: &str) -> Template {
+	expand_view_here! { }
+	Template { int: 7, float: 7.0, root, button, label }
+}
+
+fn main() {
+	block!(gtk::Frame { // the child is the...
+		// root item, not the template itself
+		child: &_.root @ template("text") {
+			// to edit template fields, use a dot
+			root.set_spacing: 6
+			button.set_label: "Button"
+			
+			// `ref` to edit a template...
+			ref root { // field within a scope
+				set_margin_top: 6
+				set_margin_bottom: 6
+			}
+		}
+	});
+}
+~~~
+
+</td><td>
+
+Almost the same code as the previous row is generated, but the view code is written in an attribute to avoid using a module.
+
+~~~ rust
+pub struct Template {
+    int: i32,
+    pub float: f32,
+    pub root: gtk::Box,
+    pub button: gtk::Button,
+    label: gtk::Label,
+}
+pub fn template(text: &str) -> Template {
+    let root = <gtk::Box>::default();
+    let label = <gtk::Label>::builder().build();
+    let button = <gtk::Button>::builder().build();
+    let gtk_button_0 = <gtk::Button>::builder().label(text).build();
+    root.append(&gtk_button_0);
+    root.append(&button);
+    root.append(&label);
+    Template { int: 7, float: 7.0, root, button, label }
+}
+fn main() {
+    let template_1 = template("text");
+    let gtk_frame_0 = <gtk::Frame>::builder().child(&template_1.root).build();
+    template_1.root.set_spacing(6);
+    template_1.button.set_label("Button");
+    let _ = template_1.root;
+    template_1.root.set_margin_top(6);
+    template_1.root.set_margin_bottom(6);
+}
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Template without declaring struct in the view</summary><br/>
+
+<table><tr><td>
+
+~~~ rust
+#[view(pub, int: i32, pub float: f32)]
+impl Template {
+	fn new(text: &str) -> Self {
+		expand_view_here! { }
+		Self { int: 7, float: 7.0, root, label }
+	}
+	view!(gtk::Box ref root {
+		append: &_ @ gtk::Button { label: text }
+		append: &_ @ gtk::Label pub label { }
+	}!);
+}
+~~~
+
+</td><td rowspan="2">
+
+The attribute is used for `impl`, where the first argument is the visibility of the struct to be generated (optional) and the rest of the arguments are additional fields, although it is also possible to leave the attribute empty for `impl` and define the struct in the view. Both ways expand equally:
+
+~~~ rust
+pub struct Template {
+    int: i32,
+    pub float: f32,
+    root: gtk::Box,
+    pub label: gtk::Label,
+}
+impl Template {
+    fn new(text: &str) -> Self {
+        let root = <gtk::Box>::default();
+        let label = <gtk::Label>::builder()
+            .build();
+        let gtk_button_0 = <gtk::Button>::builder()
+            .label(text).build();
+        root.append(&gtk_button_0);
+        root.append(&label);
+        Self { int: 7, float: 7.0, root, label }
+    }
+}
+~~~
+
+</td></tr><tr><td>
+
+~~~ rust
+#[view] // although the struct can still be...
+impl Template { // defined in the view for `impl`
+	view! {
+		pub struct Template { int: i32, pub float: f32 }
+		gtk::Box ref root {
+			append: &_ @ gtk::Button { label: text }
+			append: &_ @ gtk::Label pub label { }
+		}!
+	}
+	fn new(text: &str) -> Self {
+		expand_view_here! { }
+		Self { int: 7, float: 7.0, root, label }
+	}
+}
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>The above but with <code>mod</code>, and returning to a template</summary><br/>
+
+In addition to visibility, the first attribute argument can be the name of a template struct, or its generics, or two of them at once, or all three at once.
+
+<table><tr><td>
+
+~~~ rust
+#[view(pub Template<'a, T>, text: &'a T)]
+mod module {
+	type Any = Box<dyn std::any::Any>;
+	
+	fn template<'a, T>(text: &'a T) -> Template<'a, T> {
+		use super::*;
+		expand_view_here! { }
+		
+		let frame = Box::new(frame);
+		Template { root, text, my_page, frame }
+	}
+	
+	view!(gtk::Stack pub root {
+		// a template field type other than
+		// the one assumed by the macro can
+		// be specified for an item with `as`
+		add_child: &_ @ gtk::Frame ref frame as Any { }
+			// returns can also be referenced in the
+			// template by specifying the type with `as`
+			'back pub my_page as gtk::StackPage { }!
+	}!);
+}
+~~~
+
+</td><td>
+
+~~~ rust
+mod module {
+    type Any = Box<dyn std::any::Any>;
+    fn template<'a, T>(text: &'a T) -> Template<'a, T> {
+        use super::*;
+        let root = <gtk::Stack>::default();
+        let frame = <gtk::Frame>::builder().build();
+        let my_page = root.add_child(&frame);
+        let frame = Box::new(frame);
+        Template { root, text, my_page }
+    }
+    pub struct Template<'a, T> {
+        text: &'a T,
+        pub root: gtk::Stack,
+        frame: Any,
+        pub my_page: gtk::StackPage,
+    }
+}
+~~~
+
+</td></tr></table><br/></details>
+
+<details><summary>Avoid templates with too many arguments</summary><br/>
+
+<table><tr><td>
+
+~~~ rust
+struct CustomBox { // simply use struct fields...
+	expanded: bool, // instead of arguments
+	margin: i32,
+	name: &'static str,
+} // these fields will behave as "custom properties"
+
+#[view(Template)]
+impl CustomBox {
+	fn start(self) -> Template {
+		expand_view_here! { }    // `fn start(self)`...
+		Template { root, frame } // "must" be defined
+	}
+	view!(gtk::Box ref root {
+		margin_start: self.margin
+		margin_end: self.margin
+		hexpand: self.expanded
+		vexpand: self.expanded
+		~
+		append: &_ @ gtk::Label {
+			label: format!("Name: {}", self.name)
+		}
+		append: &_ @gtk::Frame ref frame { }
+	});
+}
+fn main() {
+	block!(gtk::Frame {
+		child: &_.root @ CustomBox {
+			// "custom properties" go here
+			expanded: true; margin: 12; name: "First"
+			~ // `.start()` is chained
+			
+			// template fields can now be edited
+			root.set_spacing: 6
+			frame.set_child: Some(&_) @ gtk::Label { }
+		}? // requires adding `?` after `}`
+	});
+}
+~~~
+
+</td><td>
+
+~~~ rust
+struct CustomBox {
+    expanded: bool,
+    margin: i32,
+    name: &'static str,
+}
+struct Template {
+    root: gtk::Box,
+    frame: gtk::Frame,
+}
+impl CustomBox {
+    fn start(self) -> Template {
+        let frame = <gtk::Frame>::builder().build();
+        let gtk_label_0 = <gtk::Label>::builder()
+            .label(alloc::__export::must_use({
+                alloc::fmt::format(alloc::__export::format_args!("Name: {}", self.name))
+            }))
+            .build();
+        let root = <gtk::Box>::builder()
+            .margin_start(self.margin)
+            .margin_end(self.margin)
+            .hexpand(self.expanded)
+            .vexpand(self.expanded)
+            .build();
+        root.append(&gtk_label_0);
+        root.append(&frame);
+        Template { root, frame }
+    }
+}
+fn main() {
+    let gtk_label_2 = <gtk::Label>::builder().build();
+    let custombox_1 = (CustomBox {
+        expanded: true,
+        margin: 12,
+        name: "First",
+    }).start();
+    let gtk_frame_0 = <gtk::Frame>::builder().child(&custombox_1.root).build();
+    custombox_1.root.set_spacing(6);
+    custombox_1.frame.set_child(Some(&gtk_label_2));
+}
+~~~
+
+</td></tr></table><br/></details>
 
 ## Basic maintenance
 

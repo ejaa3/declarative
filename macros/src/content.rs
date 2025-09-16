@@ -186,19 +186,18 @@ pub fn parse_vec(input: syn::parse::ParseStream) -> syn::Result<(syn::token::Bra
 
 fn scope(
 	content: impl IntoIterator<Item = Content>, attrs: &[syn::Attribute], assignee: crate::Assignee
-) -> syn::Result<TokenStream> {
+) -> TokenStream {
 	let (mut objects, mut constrs, mut settings, mut bindings) = Default::default();
 	
 	for content in content { expand(
 		content, &mut objects, &mut constrs, &mut settings, &mut bindings,
 		&mut None, crate::Attributes::Some(attrs), assignee, None
-	)? }
+	) }
 	
 	crate::bindings_error(&mut settings, bindings.spans);
 	
 	for constr in constrs.into_iter().rev() { constr.extend_into(&mut objects) }
-	objects.extend(settings);
-	Ok(objects)
+	objects.extend(settings); objects
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -212,7 +211,7 @@ pub fn expand(
 	  pattrs: crate::Attributes<&[syn::Attribute]>,
 	assignee: crate::Assignee,
 	  constr: Option<usize>,
-) -> syn::Result<()> {
+) {
 	match content {
 		Content::Bind(bind) => {
 			let Bind { token, init, mode } = *bind;
@@ -220,7 +219,7 @@ pub fn expand(
 			
 			match mode {
 				BindMode::Braced { attrs, brace, body } => {
-					let mut body = Group::new(Delimiter::Brace, scope(body, &[], assignee)?);
+					let mut body = Group::new(Delimiter::Brace, scope(body, &[], assignee));
 					body.set_span(brace.span.join());
 					
 					let pattrs = pattrs.get(fields);
@@ -229,29 +228,30 @@ pub fn expand(
 					bindings.stream.extend(body)
 				}
 				BindMode::Unbraced(content) => {
-					let scope = scope([content], pattrs.get(fields), assignee)?;
+					let scope = scope([content], pattrs.get(fields), assignee);
 					if init.is_some() { settings.extend(scope.clone()) }
 					bindings.stream.extend(scope)
 				}
-			} Ok(())
+			}
 		}
 		Content::BindColon(bind_colon) => {
 			let BindColon { attrs, token, if_, cond, brace, body } = *bind_colon;
-			let mut body = Group::new(Delimiter::Brace, scope(body, &[], assignee)?);
+			let mut body = Group::new(Delimiter::Brace, scope(body, &[], assignee));
 			body.set_span(brace.span.join());
 			
 			let pattrs = pattrs.get(fields);
 			bindings.spans.push(token.span());
 			bindings.stream.extend(quote![#(#pattrs)* #(#attrs)* #if_ #cond #body]);
 			
-			settings.extend(quote![#(#pattrs)* #(#attrs)* #body]);
-			Ok(())
+			settings.extend(quote![#(#pattrs)* #(#attrs)* #body])
 		}
 		Content::Construct(construct) => {
 			let Construct { object, tilde, last, rest } = *construct;
 			
-			let Some(index) = constr
-			else { Err(syn::Error::new(tilde.span, crate::ConstrError("only allowed once")))? };
+			let Some(index) = constr else {
+				let error = crate::ConstrError("only allowed once");
+				return objects.extend(syn::Error::new(tilde.span, error).into_compile_error())
+			};
 			
 			match &mut constrs[index] {
 				Construction::BuilderPattern { span, tilde: t, .. } |
@@ -262,14 +262,14 @@ pub fn expand(
 			
 			for content in rest { expand(
 				content, objects, constrs, settings, bindings, fields, pattrs, assignee, None
-			)? } Ok(())
+			) }
 		}
 		Content::Consume(consume) => {
 			let Consume { attrs, token, mut_, name, equal, mut expr } = *consume;
 			
 			if bindings.spans.is_empty() {
-				Err(syn::Error::new(token.span(), "there are no bindings to consume \
-					or you are trying from an inner binding or conditional scope"))?
+				objects.extend(syn::Error::new(token.span(), "there are no bindings to consume or \
+					you are trying from an inner binding or conditional scope").into_compile_error())
 			}
 			
 			let mut visitor = crate::Visitor::Ok {
@@ -277,13 +277,16 @@ pub fn expand(
 			};
 			visitor.visit_expr_mut(&mut expr);
 			
-			if visitor.stream_is_empty()? { bindings.spans.clear(); }
-			else { return Err(syn::Error::new_spanned(expr, crate::BINDINGS_ERROR)) }
+			match visitor.stream_is_empty() {
+				Ok(empty) => if empty { bindings.spans.clear(); },
+				Err(_) => return objects.extend(
+					syn::Error::new_spanned(expr, crate::BINDINGS_ERROR
+				).into_compile_error()),
+			}
 			
 			let pattrs = pattrs.get(fields);
 			let let_ = syn::Ident::new("let", token.span());
 			settings.extend(quote![#(#pattrs)* #(#attrs)* #let_ #mut_ #name #equal #expr;]);
-			Ok(())
 		}
 		Content::Edit(edit) => property::expand_edit(
 			*edit, objects, constrs, settings, bindings, fields, pattrs, assignee
@@ -293,26 +296,25 @@ pub fn expand(
 			settings.extend(quote![#(#pattrs)* #(#attrs)*]);
 			
 			for If { else_, if_, expr, brace, body } in if_vec {
-				let mut body = Group::new(Delimiter::Brace, scope(body, &[], assignee)?);
+				let mut body = Group::new(Delimiter::Brace, scope(body, &[], assignee));
 				body.set_span(brace.span.join());
 				settings.extend(quote![#else_ #if_ #expr #body])
-			} Ok(())
+			}
 		}
 		Content::Match(match_) => {
 			let Match { attrs, token, expr, brace, arms } = *match_;
 			let pattrs = pattrs.get(fields);
 			
-			let body: syn::Result<_> = arms.into_iter()
+			let body = arms.into_iter()
 				.map(|Arm { attrs, pat, guard, arrow, brace, body }| {
 					let (if_, expr) = guard.as_deref().map(|(a, b)| (a, b)).unzip();
-					let mut body = Group::new(Delimiter::Brace, scope(body, &[], assignee)?);
+					let mut body = Group::new(Delimiter::Brace, scope(body, &[], assignee));
 					if let Some(brace) = brace { body.set_span(brace.span.join()); } // WARNING not always hygienic
-					Ok(quote![#(#attrs)* #pat #if_ #expr #arrow #body])
+					quote![#(#attrs)* #pat #if_ #expr #arrow #body]
 				}).collect();
 			
-			let mut body = Group::new(Delimiter::Brace, body?); body.set_span(brace.span.join());
+			let mut body = Group::new(Delimiter::Brace, body); body.set_span(brace.span.join());
 			settings.extend(quote![#(#pattrs)* #(#attrs)* #token #expr #body]);
-			Ok(())
 		}
 		Content::Property(prop) => property::expand(
 			*prop, objects, constrs, settings, bindings, fields, pattrs, assignee, constr

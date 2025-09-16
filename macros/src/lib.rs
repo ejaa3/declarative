@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
 
-#![warn(missing_docs)]
-
 //! Generic DSL macros for easy view code manipulation.
 
 mod content;
@@ -19,15 +17,12 @@ use quote::ToTokens;
 use std::{iter::Map, slice::Iter};
 use syn::{punctuated::Punctuated, visit_mut::VisitMut};
 
-macro_rules! unwrap (($expr:expr) => (match $expr {
-	Ok(value) => value,
-	Err(error) => return TokenStream::from(error.into_compile_error())
-}));
-
 #[proc_macro]
-/// The [repository examples](https://github.com/ejaa3/declarative) try to illustrate the use of this macro.
+/// See the "Usage" section of README.md or the [repository]((https://github.com/ejaa3/declarative))
+/// examples for details on how to use this macro.
 ///
 /// ### Basic usage
+///
 /// ~~~
 /// use declarative_macros::block as view;
 /// 
@@ -48,7 +43,7 @@ pub fn block(stream: TokenStream) -> TokenStream {
 	
 	let mut structs = vec![];
 	let view::Streaming::Roots(roots) = syn::parse_macro_input!(stream) else { panic!() };
-	let (mut stream, bindings) = unwrap!(view::expand(&mut structs, roots));
+	let (mut stream, bindings) = view::expand(&mut structs, roots, false);
 	
 	bindings_error(&mut stream, bindings.spans);
 	for strukt in structs { strukt.to_tokens(&mut stream) }
@@ -56,9 +51,11 @@ pub fn block(stream: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-/// The [repository examples](https://github.com/ejaa3/declarative) try to illustrate the use of this macro.
+/// See the "Usage" section of README.md or the [repository](https://github.com/ejaa3/declarative)
+/// examples for details on how to use this macro.
 ///
 /// ### Basic usage
+///
 /// ~~~
 /// use declarative_macros::view;
 /// 
@@ -74,6 +71,7 @@ pub fn block(stream: TokenStream) -> TokenStream {
 /// ~~~
 ///
 /// ### Alternate usage
+///
 /// ~~~
 /// use declarative_macros::view;
 /// 
@@ -107,29 +105,32 @@ pub fn view(stream: TokenStream, code: TokenStream) -> TokenStream {
 	};
 	
 	match syn::parse_macro_input!(stream) {
-		view::Streaming::Struct { vis, fields } => {
+		view::Streaming::Struct { vis, ident, generics, fields } => {
+			let errable = !matches!(vis, syn::Visibility::Inherited)
+				|| ident.is_some() || generics.lt_token.is_some() || !fields.is_empty();
+			
 			let structs = vec![syn::ItemStruct {
 				vis, fields: syn::Fields::Named(syn::FieldsNamed {
 					brace_token: Default::default(), named: fields
 				}),
-				attrs: vec![],
-				struct_token: Default::default(),
-				ident: syn::Ident::new("Unknown", Span::call_site()),
-				generics: Default::default(),
-				semi_token: Default::default(),
+				attrs: vec![], struct_token: Default::default(),
+				ident: ident.unwrap_or(syn::Ident::new("_", Span::call_site())),
+				generics, semi_token: Default::default(),
 			}];
 			
-			let mut visitor = view::Visitor::Ok { structs, deque: Default::default() };
+			let mut visitor = view::Visitor::Ok { structs, errable, deque: Default::default() };
 			visitor.visit_item_mut(item);
 			
 			match visitor {
-				view::Visitor::Ok { mut structs, mut deque } => {
-					if deque.is_empty() { return TokenStream::from(
-						syn::Error::new(Span::call_site(), NO_VIEW_ERROR).into_compile_error()
-					) }
-					
+				view::Visitor::Ok { mut structs, mut deque, .. } => {
+					if deque.is_empty() {
+						let error = syn::Error::new(Span::call_site(), "if no view code is \
+							written as the content of this attribute, at least one view must \
+							be created with `view!` in the scope of a `mod`, `impl` or `trait`");
+						return TokenStream::from(error.into_compile_error())
+					}
 					while let Some((spans, stream, bindings)) = deque.pop_front() {
-						unwrap!(view::parse(item, &mut output, spans, stream, bindings));
+						view::parse(item, &mut output, spans, stream, bindings);
 						fill(item, &mut output, &mut structs)
 					}
 				}
@@ -138,8 +139,8 @@ pub fn view(stream: TokenStream, code: TokenStream) -> TokenStream {
 		}
 		view::Streaming::Roots(roots) => {
 			let (range, mut structs) = (Range(Span::call_site(), Span::call_site()), vec![]);
-			let (stream, bindings) = unwrap!(view::expand(&mut structs, roots));
-			unwrap!(view::parse(item, &mut output, range, stream, bindings));
+			let (stream, bindings) = view::expand(&mut structs, roots, false);
+			view::parse(item, &mut output, range, stream, bindings);
 			fill(item, &mut output, &mut structs)
 		}
 	}
@@ -218,9 +219,6 @@ where T: syn::parse::Parse, P: syn::parse::Parse {
 }
 
 const BINDINGS_ERROR: &str = "bindings must be consumed with the `bindings!` placeholder macro";
-
-const NO_VIEW_ERROR: &str = "if no view code is written as the content of this attribute, at \
-	least one view must be created with `view!` in the scope of a `mod`, `impl` or `trait`";
 
 struct ConstrError(&'static str);
 

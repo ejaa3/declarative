@@ -37,15 +37,20 @@ impl syn::parse::Parse for Roots {
 
 pub enum Streaming {
 	Roots(Roots), Struct {
-		   vis: syn::Visibility,
-		fields: Punctuated<syn::Field, syn::Token![,]>
+		     vis: syn::Visibility,
+		   ident: Option<syn::Ident>,
+		generics: syn::Generics,
+		  fields: Punctuated<syn::Field, syn::Token![,]>
 	}
 }
 
 impl syn::parse::Parse for Streaming {
 	fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
 		if input.is_empty() { return Ok(Self::Struct {
-			vis: syn::Visibility::Inherited, fields: Default::default()
+			     vis: syn::Visibility::Inherited,
+			   ident: None,
+			generics: syn::Generics::default(),
+			  fields: Default::default(),
 		}) }
 		
 		if input.peek(syn::Token![pub]) && (input.peek2(syn::Token![struct]) || (
@@ -53,13 +58,26 @@ impl syn::parse::Parse for Streaming {
 		)) { return Ok(Self::Roots(input.parse()?)) }
 		
 		let mut vis = input.parse()?;
+		let ident = if input.peek(syn::Ident) && (
+			   input.peek2(syn::parse::End)
+			|| input.peek2(syn::Token![<])
+			|| input.peek2(syn::Token![,])
+		) { Some(input.parse()?) } else { None };
+		
+		let generics: syn::Generics = input.parse()?;
 		let mut fields;
 		
 		if let syn::Visibility::Inherited = vis {
-			if input.peek(syn::Ident) && input.peek2(syn::Token![:]) && (
+			if ident.is_some() || generics.lt_token.is_some() {
+				let comma = input.parse::<syn::Token![,]>();
+				fields = input.parse_terminated(syn::Field::parse_named, syn::Token![,])?;
+				if !fields.is_empty() { comma?; }
+			} else if input.peek(syn::Ident) && input.peek2(syn::Token![:]) && (
 				input.peek3(syn::Token![::]) || !input.peek3(syn::Token![:])
 			) {
 				fields = input.parse_terminated(syn::Field::parse_named, syn::Token![,])?
+			} else if generics.lt_token.is_some() {
+				return Err(syn::Error::new_spanned(generics, "unexpected generics"))
 			} else { return Ok(Self::Roots(input.parse()?)) }
 		} else {
 			let comma = input.parse::<syn::Token![,]>();
@@ -68,40 +86,46 @@ impl syn::parse::Parse for Streaming {
 				if comma.is_err() { fields[0].vis = vis; vis = syn::Visibility::Inherited }
 			} // this condition prevents panicking with `attempt to subtract with overflow`
 		}     // while expanding #[view(pub)] as it should
-		Ok(Self::Struct { vis, fields })
+		Ok(Self::Struct { vis, ident, generics, fields })
 	}
 }
 
-pub fn expand(
-	structs: &mut Vec<syn::ItemStruct>, Roots(roots): Roots
-) -> syn::Result<(TokenStream, Bindings)> {
-	let (mut objects, mut constrs, mut settings, mut bindings) = Default::default();
-	let (mut n_fields, mut followed, mut strukt) = (0, true, None);
+pub fn expand(structs: &mut Vec<syn::ItemStruct>, roots: Roots, errable: bool) -> (TokenStream, Bindings) {
+	let mut objects = TokenStream::new();
+	let (mut constrs, mut settings, mut bindings) = Default::default();
+	let (mut n_fields, mut strukt, mut followed) = ([0; 3], None, true);
 	
-	if let Some(syn::Fields::Named(fields)) = &mut structs.first()
-		.map(|strukt| &strukt.fields) { n_fields = fields.named.len() }
+	if let Some(syn::Fields::Named(fields)) = structs.first()
+		.map(|strukt| &strukt.fields) { n_fields[0] = fields.named.len() }
 	
-	let check_struct = |followed: bool, strukt: &mut Option<_>, structs: &mut Vec<_>| {
-		if !followed { return Err(
-			syn::Error::new_spanned(strukt, "structs must be followed by items")
-		) }
-		if let Some(strukt) = strukt.take() { structs.push(strukt) }
-		Ok(())
-	};
+	macro_rules! check_struct(() => (
+		if !followed {
+			objects.extend(syn::Error::new_spanned(
+				strukt.as_ref(), "structs must be followed by items"
+			).into_compile_error())
+		}
+		if let Some(strukt) = strukt.take() {
+			if n_fields[1] == n_fields[2] {
+				objects.extend(syn::Error::new_spanned(
+					&strukt, "this struct does not refer to any item"
+				).into_compile_error())
+			}
+			structs.push(strukt)
+		}
+	));
 	
-	for root in roots { match root {
+	for root in roots.0 { match root {
 		Root::Struct(item) => {
-			check_struct(followed, &mut strukt, structs)?;
+			check_struct!();
+			let syn::Fields::Named(fields) = &item.fields else { panic!() };
+			n_fields[1] = fields.named.len();
 			strukt = Some(item);
-			followed = false
+			followed = false;
 		}
 		Root::Item(item) => {
 			followed = true;
 			
-			let fields = &mut if let Some(item) = strukt.as_mut() {
-				let syn::Fields::Named(named) = &mut item.fields else { panic!() };
-				Some(&mut named.named)
-			} else if let Some(strukt) = structs.first_mut() {
+			let fields = &mut if let Some(strukt) = strukt.as_mut().or(structs.first_mut()) {
 				let syn::Fields::Named(fields) = &mut strukt.fields else { panic!() };
 				Some(&mut fields.named)
 			} else { None };
@@ -109,21 +133,33 @@ pub fn expand(
 			item::expand(
 				item, &mut objects, &mut constrs, &mut settings,
 				&mut bindings, fields, Attributes::Some(&[])
-			)?
+			);
+			if let Some(fields) = fields { n_fields[2] = fields.len() }
 		}
 	} }
 	
-	if let Some(syn::Fields::Named(fields)) = structs.first().map(|strukt| &strukt.fields)
-		{ if n_fields == fields.named.len() { structs.swap_remove(0); } }
+	if let Some(strukt) = structs.first() {
+		let syn::Fields::Named(fields) = &strukt.fields else { panic!() };
+		if n_fields[0] == fields.named.len() {
+			structs.swap_remove(0);
+			if errable {
+				objects.extend(syn::Error::new(
+					Span::call_site(), "these arguments would declare a \
+					struct that does not reference any item in the view"
+				).into_compile_error())
+			}
+		}
+	}
 	
-	check_struct(followed, &mut strukt, structs)?;
+	check_struct! { }
 	for constr in constrs.into_iter().rev() { constr.extend_into(&mut objects) }
-	objects.extend(settings); Ok((objects, bindings))
+	objects.extend(settings); (objects, bindings)
 }
 
 pub enum Visitor {
 	Error(syn::Error), Ok {
 		structs: Vec<syn::ItemStruct>,
+		errable: bool,
 		  deque: std::collections::VecDeque<(Range, TokenStream, Bindings)>
 	}
 }
@@ -131,7 +167,7 @@ pub enum Visitor {
 macro_rules! item {
 	($visit:ident, $item:ident) => {
 		fn $visit(&mut self, node: &mut syn::$item) {
-			let Self::Ok { structs, deque } = self else { return };
+			let Self::Ok { structs, errable, deque } = self else { return };
 			
 			if let syn::$item::Macro(mac) = node {
 				if mac.mac.path.is_ident("view") {
@@ -142,13 +178,10 @@ macro_rules! item {
 					if mac.mac.tokens.is_empty() {
 						return *self = Self::Error(range.error("this view has no content"))
 					}
-					return match mac.mac.parse_body().map(|root| expand(structs, root)) {
-						Ok(expansion) => match expansion {
-							Ok((stream, bindings)) => {
-								deque.push_back((range, stream, bindings));
-								*node = syn::$item::Verbatim(TokenStream::new())
-							}
-							Err(error) => *self = Self::Error(error)
+					return match mac.mac.parse_body().map(|root| expand(structs, root, *errable)) {
+						Ok((stream, bindings)) => {
+							deque.push_back((range, stream, bindings));
+							*node = syn::$item::Verbatim(TokenStream::new())
 						}
 						Err(error) => *self = Self::Error(error)
 					}
@@ -170,8 +203,10 @@ impl VisitMut for Visitor {
 			if let syn::Type::Path(path) = node.self_ty.as_ref() {
 				path.path.get_ident().map(|ident| structs.first_mut().map(|strukt| {
 					strukt.attrs = node.attrs.clone();
-					strukt.generics = node.generics.clone();
-					strukt.ident = ident.clone();
+					if strukt.generics.lt_token.is_none() {
+						strukt.generics = node.generics.clone()
+					}
+					if strukt.ident == "_" { strukt.ident = ident.clone() }
 				}));
 			}
 		}
@@ -179,20 +214,22 @@ impl VisitMut for Visitor {
 	}
 }
 
-const ERROR: &str = "views must be consumed with the `expand_view_here!` placeholder macro";
-
 pub fn parse(item: &mut syn::Item,
            output: &mut TokenStream,
             range: Range,
      mut   stream: TokenStream,
      mut bindings: Bindings,
-) -> syn::Result<()> {
+) {
 	let mut visitor = crate::Visitor::Ok {
 		items: None, assignee: &mut None, placeholder: "expand_view_here", stream: &mut stream
 	};
 	visitor.visit_item_mut(item);
 	
-	if !visitor.stream_is_empty()? { Err(range.error(ERROR))? }
+	const ERROR: &str = "views must be consumed with the `expand_view_here!` placeholder macro";
+	match visitor.stream_is_empty() {
+		Ok(empty) => if !empty { stream.extend(range.error(ERROR).into_compile_error()) },
+		Err(error) => stream.extend(error.into_compile_error()),
+	}
 	
 	if !bindings.spans.is_empty() {
 		let mut visitor = crate::Visitor::Ok {
@@ -200,8 +237,11 @@ pub fn parse(item: &mut syn::Item,
 		};
 		visitor.visit_item_mut(item);
 		
-		if !visitor.stream_is_empty()? { crate::bindings_error(output, bindings.spans) }
-	} Ok(())
+		match visitor.stream_is_empty() {
+			Ok(empty) => if !empty { crate::bindings_error(output, bindings.spans) },
+			Err(error) => stream.extend(error.into_compile_error()),
+		}
+	}
 }
 
 pub fn display_ty(ty: &syn::TypePath, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

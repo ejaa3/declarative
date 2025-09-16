@@ -87,10 +87,9 @@ pub fn parse(input: syn::parse::ParseStream, attrs: Option<Vec<syn::Attribute>>)
 	if input.peek(syn::token::Brace) {
 		let braces;
 		let brace = syn::braced!(braces in input);
-		let span = brace.span.join();
 		
 		if let Object::Path(path) = &mut object {
-			if path.field.auto { path.field.name.set_span(span) }
+			if path.field.auto { path.field.name.set_span(brace.span.open()) }
 		}
 		
 		while !braces.is_empty() { body.push(braces.parse()?) }
@@ -103,9 +102,9 @@ pub fn parse(input: syn::parse::ParseStream, attrs: Option<Vec<syn::Attribute>>)
 				else { Mode::Normal(pound.span) }
 			} else { Mode::Normal(pound.span) }
 		} else if let Object::Path(ref path) = object {
-			if path.group.is_some() { Mode::Normal(span) }
-			else { Mode::Builder(span) }
-		} else { Mode::Builder(span) };
+			if path.group.is_some() { Mode::Normal(brace.span.close()) }
+			else { Mode::Builder(brace.span.close()) }
+		} else { Mode::Builder(brace.span.close()) };
 	}
 	
 	Ok(Item { attrs, at_span, object, mode, body })
@@ -120,7 +119,7 @@ pub fn expand(
 	bindings: &mut crate::Bindings,
 	  fields: &mut Option<&mut Punctuated<syn::Field, syn::Token![,]>>,
 	  pattrs: crate::Attributes<&[syn::Attribute]>,
-) -> syn::Result<()> {
+) {
 	let mut attrs = attrs.unwrap();
 	crate::extend_attributes(&mut attrs, pattrs.get(fields));
 	
@@ -165,10 +164,16 @@ pub fn expand(
 				}
 			};
 			
-			if let Some(vis) = vis {
-				let fields = fields.as_deref_mut().ok_or_else(
-					|| syn::Error::new_spanned(quote![#vis #ty], NO_FIELD_ERROR)
-				)?;
+			'block: {
+				let Some(vis) = vis else { break 'block attributes = crate::Attributes::Some(attrs) };
+				
+				let Some(fields) = fields.as_deref_mut() else {
+					let error = syn::Error::new_spanned(quote![#vis #ty], NO_FIELD_ERROR);
+					objects.extend(error.into_compile_error());
+					break 'block attributes = crate::Attributes::Some(attrs)
+				};
+				
+				attributes = crate::Attributes::None(fields.len());
 				
 				let ty = 'ty: {
 					if let Some(ty) = ty { break 'ty *ty }
@@ -178,16 +183,16 @@ pub fn expand(
 							break 'ty ty
 						} else if ty.path.segments.len() > 1 {
 							ty.path.segments.pop();
+							ty.path.segments.pop_punct();
 							break 'ty ty
 						} else { crate::Path::Type(ty) }
 						
 						path => path
 					};
 					
-					Err(syn::Error::new_spanned(quote![#path #group], NO_TYPE_ERROR))?
+					let error = syn::Error::new_spanned(quote![#path #group], NO_TYPE_ERROR);
+					break 'block objects.extend(error.into_compile_error())
 				};
-				
-				attributes = crate::Attributes::None(fields.len());
 				
 				fields.push(syn::Field {
 					attrs, vis, ty: syn::Type::Path(ty),
@@ -195,7 +200,7 @@ pub fn expand(
 					         ident: Some(name.clone()),
 					   colon_token: None,
 				});
-			} else { attributes = crate::Attributes::Some(attrs) }
+			}
 			
 			assignee_ident = name;
 			(Assignee::Ident(None, &assignee_ident), constr)
@@ -211,9 +216,7 @@ pub fn expand(
 	for content in body { content::expand(
 		content, objects, constrs, settings, bindings, fields,
 		attributes.as_slice(), new_assignee, new_constr
-	)? }
-	
-	Ok(())
+	) }
 }
 
 pub struct Back {
@@ -234,7 +237,7 @@ pub fn parse_back(input: syn::parse::ParseStream) -> syn::Result<Option<Box<Back
 	let brace = syn::braced!(braces in input);
 	let build = input.parse::<syn::Token![!]>().err().map(|_| brace.span.join());
 	
-	if field.auto { field.name.set_span(brace.span.join()) }
+	if field.auto { field.name.set_span(brace.span.open()) }
 	
 	let mut body = vec![];
 	while !braces.is_empty() { body.push(braces.parse()?) }
@@ -267,7 +270,7 @@ pub fn expand_back(
 	  fields: &mut Option<&mut Punctuated<syn::Field, syn::Token![,]>>,
 	   attrs: Attributes<Vec<syn::Attribute>>,
 	   right: TokenStream,
-) -> syn::Result<()> {
+) {
 	let pattrs = attrs.get(fields);
 	let let_ = syn::Ident::new("let", token.span());
 	let Field { vis, mut_, name, ty, auto } = field;
@@ -285,34 +288,35 @@ pub fn expand_back(
 	for content in body { content::expand(
 		content, objects, constrs, &mut setup, bindings,
 		fields, attrs.as_slice(), Assignee::Ident(None, &name), index
-	)? }
+	) }
 	
-	if let Some(vis) = vis {
-		let fields = fields.as_deref_mut().ok_or_else(
-			|| syn::Error::new_spanned(quote![#vis #ty], NO_FIELD_ERROR)
-		)?;
-		
-		let ty = ty.ok_or_else(|| syn::Error::new_spanned(quote![#name], NO_TYPE_ERROR))?;
-		
+	'block: {
+		let Some(vis) = vis else { break 'block };
+		let Some(fields) = fields.as_deref_mut() else {
+			let error = syn::Error::new_spanned(quote![#vis #ty], NO_FIELD_ERROR);
+			break 'block objects.extend(error.into_compile_error())
+		};
+		let Some(ty) = ty else {
+			let error = syn::Error::new_spanned(quote![#name], NO_TYPE_ERROR);
+			break 'block objects.extend(error.into_compile_error())
+		};
 		let attrs = match attrs {
 			Attributes::Some(attrs) => attrs,
 			Attributes::None(index) => fields.iter().nth(index).unwrap().attrs.clone()
 		};
-		
 		fields.push(syn::Field {
 			attrs, vis, ty: syn::Type::Path(*ty),
 			    mutability: syn::FieldMutability::None,
 			         ident: Some(name.clone()),
 			   colon_token: None,
-		});
+		})
 	}
-	
 	if let Some(index) = index {
 		if constrs.get(index).is_some() {
 			constrs.remove(index).extend_into(settings)
 		}
 	}
-	settings.extend(setup); Ok(())
+	settings.extend(setup)
 }
 
 const NO_FIELD_ERROR: &str = "a visibility cannot be specified if a struct has not \

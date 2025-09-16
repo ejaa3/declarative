@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2024 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
+ * SPDX-FileCopyrightText: 2025 Eduardo Javier Alvarado Aarón <eduardo.javier.alvarado.aaron@gmail.com>
  *
  * SPDX-License-Identifier: (Apache-2.0 or MIT)
  */
@@ -23,7 +23,11 @@ struct Child {
 	   parent_tx: async_channel::Sender<&'static str>,
 }
 
-#[view]
+// the first argument is the name of the template struct
+// the remaining arguments are additional fields
+#[view(ChildTemplate, tx: async_channel::Sender<bool>)]
+// it accepts prepending a visibility (e.g., `pub ChildTemplate`)
+// ... or appending generics (e.g., `ChildTemplate<T>`)
 impl Child {
 	// we name the function `start` due to the `construct!` macro implementation
 	fn start(mut self) -> ChildTemplate { // `mut self` because it has a state that should be mutable
@@ -41,28 +45,24 @@ impl Child {
 		ChildTemplate { tx, first_label, root }
 	}
 	
-	view! {
-		struct ChildTemplate { tx: async_channel::Sender<bool> }
-		
-		gtk::Frame ref root {
-			label: self.name
-			child: &_ @ gtk::Box {
-				margin_bottom: 6
-				margin_end: 6
-				margin_start: 6
-				margin_top: 6
-				orientation: gtk::Orientation::Vertical
-				spacing: 6
-				~
-				append: &_ @ gtk::Label ref first_label { label: self.third_param }
-				append: &_ @ gtk::Label { label: self.fourth_param }
-				append: &_ @ gtk::Label { 'bind #set_label: &format!("Count: {}", self.count) }
-				append: &_ @ gtk::Button::with_label("Greet") {
-					connect_clicked: move |_| send!(self.name => self.parent_tx)
-				}
+	view![ gtk::Frame ref root {
+		label: self.name
+		child: &_ @ gtk::Box {
+			margin_bottom: 6
+			margin_end: 6
+			margin_start: 6
+			margin_top: 6
+			orientation: gtk::Orientation::Vertical
+			spacing: 6
+			~
+			append: &_ @ gtk::Label ref first_label { label: self.third_param }
+			append: &_ @ gtk::Label { label: self.fourth_param }
+			append: &_ @ gtk::Label { 'bind #set_label: &format!("Count: {}", self.count) }
+			append: &_ @ gtk::Button::with_label("Greet") {
+				connect_clicked: move |_| send!(self.name => self.parent_tx)
 			}
 		}
-	}
+	} ];
 }
 
 struct Parent;
